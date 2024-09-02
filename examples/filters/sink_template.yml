@@ -1,0 +1,15 @@
+name: my_sink
+type: "SinkTemplate"
+filter_settings:
+  Timeout: 0
+device_settings:  
+command_settings: 
+queue_settings:   
+  max sources: 1
+  max sinks: 0
+  readers:
+    - id: 0
+      batch: 1
+      new per batch: 1
+      blocking: true
+          

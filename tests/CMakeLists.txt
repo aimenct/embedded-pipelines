@@ -1,0 +1,20 @@
+# Add a global "tests" target to compile all tests from enabled subdirectories
+add_custom_target(tests)
+
+# Enable subdirectories to make available new test executable targets
+add_subdirectory(core)
+if ( ENABLE_CAMERA )
+  add_subdirectory( camera )
+endif ()
+if ( ENABLE_OPCUA )
+  add_subdirectory( opcua )
+endif ()
+if ( ENABLE_MODBUS )
+  add_subdirectory( modbus )
+endif ()
+if ( ENABLE_SOCKETS )
+  add_subdirectory( sockets )
+endif ()
+if ( ENABLE_RTSP )
+  add_subdirectory( rtsp )
+endif ()

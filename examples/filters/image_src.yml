@@ -1,0 +1,6 @@
+Filters:
+   -  name: Images
+      type: ImgSrc
+      settings:
+         timeout: 40000
+         folder path: ../../../examples/data/tif

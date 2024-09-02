@@ -1,0 +1,24 @@
+name: my_filter
+type: "FiterTemplate"
+filter_settings:
+      Timeout: 1000
+device_settings:  
+command_settings: 
+queue_settings:   
+  max sources: 1
+  max sinks: 1
+  sinks:
+    - id: 0
+      length: 10
+      type: lifo
+      max readers: 5
+  writers:
+    - id: 0
+      batch: 1
+      blocking: true
+  readers:
+    - id: 0
+      batch: 1
+      new per batch: 1
+      blocking: true
+          

@@ -1,0 +1,78 @@
+filters:
+  - name: OPCUAXmlserver
+    type: OPCUAXmlserver
+    filter_settings:
+      only yaml settings: n
+      server_port: 4840
+      config_output: config_xml_srv.yaml
+    device_settings:
+      server_port: 4851
+    #------- Comment below to browse the nodes ---------
+    server_nodes: #If server_nodes is specified, it will link the nodes below with the OPCUA server.
+                  #Otherwise, it will parse the server nodes into the YAML for user configuration.
+    - name: Base_x #DisplayName of the OPCUA Node (Unused parameter for linking with edge nodes, it is entirely optional if the user define it)
+      node_id: ns=2;i=26 #ns=Namespace of the OPCUA Node;i= Numeric identifier of the OPCUA Node
+      src_port: "" #Source port of the OPCUAXmlserver filter, links with the queue/filter connected to this port, depending on the selected type
+      msg_item: "" #Setting Name or Queue item, depending on the selected type
+      edge_to_opcua: 0 #0-No parsing, 1-Setting Node, 2-Queue Node
+      references: 
+        - name: Kind
+          node_id: ns=2;i=27
+          src_port: ""
+          msg_item: ""
+          edge_to_opcua: 0
+          references:
+            - name: kind
+              node_id: ns=2;i=28
+              src_port: ""
+              msg_item: ""
+              edge_to_opcua: 0
+              references:
+                []
+        - name: valueType
+          node_id: ns=2;i=29
+          src_port: ""
+          msg_item: ""
+          edge_to_opcua: 0
+          references:
+            []
+        - name: value
+          node_id: ns=2;i=30
+          src_port: 0
+          msg_item: "fake_setting3"
+          edge_to_opcua: 1
+          references:
+            []
+    - name: Rotation_x
+      node_id: ns=2;i=218
+      src_port: ""
+      msg_item: ""
+      edge_to_opcua: 0
+      references:
+        - name: Kind
+          node_id: ns=2;i=219
+          src_port: ""
+          msg_item: ""
+          edge_to_opcua: 0
+          references:
+            - name: kind
+              node_id: ns=2;i=220
+              src_port: ""
+              msg_item: ""
+              edge_to_opcua: 0
+              references:
+                []
+        - name: valueType
+          node_id: ns=2;i=221
+          src_port: ""
+          msg_item: ""
+          edge_to_opcua: 0
+          references:
+            []
+        - name: value
+          node_id: ns=2;i=222
+          src_port: 0
+          msg_item: 0
+          edge_to_opcua: 2
+          references:
+            []

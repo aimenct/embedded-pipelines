@@ -1,0 +1,32 @@
+filters:
+  - name: src1
+    type: FakeSrc
+    settings:
+      push mode: y
+      queue length: 5
+      testingggg:
+        framerate: 30
+      parameters:
+        - name: temperature
+          type: 4
+        - name: pressure
+          type: 5
+  - name: src2
+    type: FakeSrc
+    settings:
+      push mode: y
+      queue length: 5
+      framerate: 10
+      parameters:
+        - name: force
+          type: 4
+  - name: sink
+    type: PrintSink
+    settings:
+      timeout: 0
+  - name: OPCUAserver
+    type: OPCUAserver
+    filter_settings:
+      only yaml settings: n
+      server_port: 4840
+    

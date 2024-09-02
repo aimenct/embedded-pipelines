@@ -1,0 +1,137 @@
+<opc:TypeDictionary
+  xmlns:opc="http://opcfoundation.org/BinarySchema/"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:ua="http://opcfoundation.org/UA/"
+  xmlns:tns="http://opcfoundation.org/UA/I4AAS/"
+  DefaultByteOrder="LittleEndian"
+  TargetNamespace="http://opcfoundation.org/UA/I4AAS/"
+>
+  <opc:Import Namespace="http://opcfoundation.org/UA/" Location="Opc.Ua.BinarySchema.bsd"/>
+
+  <opc:EnumeratedType Name="AASAssetKindDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="Type" Value="0" />
+    <opc:EnumeratedValue Name="Instance" Value="1" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASCategoryDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="CONSTANT" Value="0" />
+    <opc:EnumeratedValue Name="PARAMETER" Value="1" />
+    <opc:EnumeratedValue Name="VARIABLE" Value="2" />
+    <opc:EnumeratedValue Name="RELATIONSHIP" Value="3" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASDataTypeIEC61360DataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="BOOLEAN" Value="0" />
+    <opc:EnumeratedValue Name="DATE" Value="1" />
+    <opc:EnumeratedValue Name="RATIONAL" Value="2" />
+    <opc:EnumeratedValue Name="RATIONAL_MEASURE" Value="3" />
+    <opc:EnumeratedValue Name="REAL_COUNT" Value="4" />
+    <opc:EnumeratedValue Name="REAL_CURRENCY" Value="5" />
+    <opc:EnumeratedValue Name="REAL_MEASURE" Value="6" />
+    <opc:EnumeratedValue Name="STRING" Value="7" />
+    <opc:EnumeratedValue Name="STRING_TRANSLATABLE" Value="8" />
+    <opc:EnumeratedValue Name="TIME" Value="9" />
+    <opc:EnumeratedValue Name="TIME_STAMP" Value="10" />
+    <opc:EnumeratedValue Name="URL" Value="11" />
+    <opc:EnumeratedValue Name="INTEGER" Value="12" />
+    <opc:EnumeratedValue Name="INTEGER_COUNT" Value="13" />
+    <opc:EnumeratedValue Name="INTEGER_CURRENCY" Value="14" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASEntityTypeDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="CoManagedEntity" Value="0" />
+    <opc:EnumeratedValue Name="SelfManagedEntity" Value="1" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASIdentifierTypeDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="IRDI" Value="0" />
+    <opc:EnumeratedValue Name="IRI" Value="1" />
+    <opc:EnumeratedValue Name="Custom" Value="2" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASKeyElementsDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="AccessPermissionRule" Value="0" />
+    <opc:EnumeratedValue Name="AnnotatedRelationshipElement" Value="1" />
+    <opc:EnumeratedValue Name="Asset" Value="2" />
+    <opc:EnumeratedValue Name="AssetAdministrationShell" Value="3" />
+    <opc:EnumeratedValue Name="Blob" Value="4" />
+    <opc:EnumeratedValue Name="Capability" Value="5" />
+    <opc:EnumeratedValue Name="ConceptDescription" Value="6" />
+    <opc:EnumeratedValue Name="ConceptDictionary" Value="7" />
+    <opc:EnumeratedValue Name="DataElement" Value="8" />
+    <opc:EnumeratedValue Name="Entity" Value="9" />
+    <opc:EnumeratedValue Name="Event" Value="10" />
+    <opc:EnumeratedValue Name="File" Value="11" />
+    <opc:EnumeratedValue Name="FragmentReference" Value="12" />
+    <opc:EnumeratedValue Name="GlobalReference" Value="13" />
+    <opc:EnumeratedValue Name="MultiLanguageProperty" Value="14" />
+    <opc:EnumeratedValue Name="Operation" Value="15" />
+    <opc:EnumeratedValue Name="Property" Value="16" />
+    <opc:EnumeratedValue Name="Range" Value="17" />
+    <opc:EnumeratedValue Name="ReferenceElement" Value="18" />
+    <opc:EnumeratedValue Name="RelationshipElement" Value="19" />
+    <opc:EnumeratedValue Name="Submodel" Value="20" />
+    <opc:EnumeratedValue Name="SubmodelElement" Value="21" />
+    <opc:EnumeratedValue Name="SubmodelElementCollection" Value="22" />
+    <opc:EnumeratedValue Name="View" Value="23" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASKeyTypeDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="IdShort" Value="0" />
+    <opc:EnumeratedValue Name="FragmentId" Value="1" />
+    <opc:EnumeratedValue Name="Custom" Value="2" />
+    <opc:EnumeratedValue Name="IRDI" Value="3" />
+    <opc:EnumeratedValue Name="IRI" Value="4" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASLevelTypeDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="Min" Value="0" />
+    <opc:EnumeratedValue Name="Max" Value="1" />
+    <opc:EnumeratedValue Name="Num" Value="2" />
+    <opc:EnumeratedValue Name="Type" Value="3" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASModelingKindDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="Template" Value="0" />
+    <opc:EnumeratedValue Name="Instance" Value="1" />
+  </opc:EnumeratedType>
+
+  <opc:EnumeratedType Name="AASValueTypeDataType" LengthInBits="32">
+    <opc:EnumeratedValue Name="Boolean" Value="0" />
+    <opc:EnumeratedValue Name="SByte" Value="1" />
+    <opc:EnumeratedValue Name="Byte" Value="2" />
+    <opc:EnumeratedValue Name="Int16" Value="3" />
+    <opc:EnumeratedValue Name="UInt16" Value="4" />
+    <opc:EnumeratedValue Name="Int32" Value="5" />
+    <opc:EnumeratedValue Name="UInt32" Value="6" />
+    <opc:EnumeratedValue Name="Int64" Value="7" />
+    <opc:EnumeratedValue Name="UInt64" Value="8" />
+    <opc:EnumeratedValue Name="Float" Value="9" />
+    <opc:EnumeratedValue Name="Double" Value="10" />
+    <opc:EnumeratedValue Name="String" Value="11" />
+    <opc:EnumeratedValue Name="DateTime" Value="12" />
+    <opc:EnumeratedValue Name="ByteString" Value="13" />
+    <opc:EnumeratedValue Name="LocalizedText" Value="14" />
+    <opc:EnumeratedValue Name="UtcTime" Value="15" />
+  </opc:EnumeratedType>
+
+  <opc:OpaqueType Name="AASMimeDataType">
+  </opc:OpaqueType>
+
+  <opc:OpaqueType Name="AASPathDataType">
+  </opc:OpaqueType>
+
+  <opc:OpaqueType Name="AASPropertyValueDataType">
+  </opc:OpaqueType>
+
+  <opc:OpaqueType Name="AASQualifierDataType">
+  </opc:OpaqueType>
+
+  <opc:StructuredType Name="AASKeyDataType" BaseType="ua:ExtensionObject">
+    <opc:Field Name="Type" TypeName="tns:AASKeyElementsDataType" />
+    <opc:Field Name="Local" TypeName="opc:Boolean" />
+    <opc:Field Name="Value" TypeName="opc:String" />
+    <opc:Field Name="IdType" TypeName="tns:AASKeyTypeDataType" />
+  </opc:StructuredType>
+
+</opc:TypeDictionary>

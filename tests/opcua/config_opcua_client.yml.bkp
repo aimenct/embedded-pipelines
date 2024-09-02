@@ -1,0 +1,24 @@
+filters:
+- name: OPCUAclient
+  type: OPCUAclient
+  filter_settings:
+    push mode: y
+    endPointUrl: opc.tcp://localhost:4850
+    sampling_interval: 0.05
+    max_src_queues: 2
+  metrics:
+  - src_queue: 0
+    items:
+      - msg_item_id: 0
+        node: ns=1;i=1
+      - msg_item_id: 4
+        node: ns=1;i=2
+      # - msg_item_id: 5
+      #   node: ns=1;i=3 # Currently, images transmitted via OPC UA (JPG, PNG, BMP, GIF) will occupy
+                       # two(e.g msg_item 2: Image and msg_item 3: size) item spaces in the queue.
+  - src_queue: 1
+    items:
+      # - msg_item_id: 0
+      #   node: ns=1;i=1
+      - msg_item_id: 2
+        node: ns=1;i=4

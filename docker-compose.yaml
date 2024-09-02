@@ -1,0 +1,23 @@
+services:
+    edge:
+        container_name: embedded-pipelines-env 
+        build:
+          context: ./
+          dockerfile: Dockerfile
+          args:
+            - USERNAME=${USER}
+            - USER_UID=${USER_ID:-1000}
+            - USER_GID=${USER_GID:-1000}
+        image: embedded-pipelines-env:latest
+        environment:
+            - DISPLAY=$DISPLAY       # For display sharing
+            - XAUTHORITY=$XAUTHORITY # For display sharing
+        volumes:
+            - ./:/embedded-pipelines
+            - $XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR:ro # For display sharing
+        devices:
+            - /dev/dri     # For hardware graphics acceleration
+            - /dev/bus/usb # For USB cameras
+        working_dir: /embedded-pipelines
+        network_mode: host
+        command: sleep infinity
