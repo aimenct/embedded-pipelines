@@ -98,18 +98,18 @@ make examples
 To use the library in other libraries or executables just include the headers of the library with the library name in front:
 
 ```cpp
-#include <ep/core.h>
+#include <embedded-pipelines/core.h>
 ```
 
 And add the following lines to your CMake file:
 
 ```cmake
-find_package(ep 0.2.0 REQUIRED)
+find_package(embedded-pipelines 0.2.0 REQUIRED)
 
 target_link_libraries(
   ${PROJECT_NAME}
   PUBLIC
-    ep::ep
+    embedded-pipelines::embedded-pipelines
 )
 ```
 
