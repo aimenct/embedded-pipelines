@@ -1,4 +1,4 @@
-find_package( OpenCV ${OPENCV_VERSION} REQUIRED )
+#find_package( OpenCV ${OPENCV_VERSION} REQUIRED )
 
 #-----------test_opcua_server----------#
 # Add the output executable for the test
@@ -8,7 +8,14 @@ add_executable(test_opcua_server)
 target_sources(
   test_opcua_server
   PRIVATE
-    new_test_opcua_server.cpp
+    test_opcua_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../core/filters/src_filter.cpp
+)
+
+target_include_directories(
+  test_opcua_server
+  PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/../core/filters/
 )
 
 # Link against the library itself.
@@ -16,7 +23,7 @@ target_link_libraries(
   test_opcua_server
   PUBLIC
     ${PROJECT_NAME}
-    ${OpenCV_LIBS}
+#    ${OpenCV_LIBS}
 )
 
 # Add targets to the global "tests" target
@@ -28,9 +35,16 @@ add_executable(test_opcua_client)
 
 # Add sources specific for the test
 target_sources(
-  test_opcua_client
+  test_opcua_client 
   PRIVATE
   test_opcua_client.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../core/filters/src_filter.cpp
+)
+
+target_include_directories(
+  test_opcua_client
+  PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/../core/filters/
 )
 
 # Link against the library itself.
@@ -38,7 +52,7 @@ target_link_libraries(
   test_opcua_client
   PUBLIC
     ${PROJECT_NAME}
-    ${OpenCV_LIBS}
+#    ${OpenCV_LIBS}
 )
 
 # Add targets to the global "tests" target
@@ -124,22 +138,20 @@ add_dependencies(tests test_opcua_client)
 
 #-----------test_opcua_xmlnodesetloader----------#
 # Add the output executable for the test
-add_executable(test_opcua_xmlnodesetloader)
+# add_executable(test_opcua_xmlnodesetloader)
 
-# Add sources specific for the test
-target_sources(
-  test_opcua_xmlnodesetloader
-  PRIVATE
-  xml2server/test_opcua_xmlnodesetloader.cpp
-)
+# # Add sources specific for the test
+# target_sources(
+#   test_opcua_xmlnodesetloader
+#   PRIVATE
+#   xml2server/test_opcua_xmlnodesetloader.cpp
+# )
 
-# Link against the library itself.
-target_link_libraries(
-  test_opcua_xmlnodesetloader
-  PUBLIC
-    ${PROJECT_NAME}
-    ${OpenCV_LIBS}
-)
+# # Link against the library itself.
+# target_link_libraries(
+#   test_opcua_xmlnodesetloader
+#   PUBLIC  pipe.assignTask(2, w2);
+# )
 
-# Add targets to the global "tests" target
-add_dependencies(tests test_opcua_xmlnodesetloader)
+# # Add targets to the global "tests" target
+# add_dependencies(tests test_opcua_xmlnodesetloader)

@@ -4,32 +4,33 @@
 
 #include "message.h"
 
-using namespace ep;
+using namespace epf;
 
-Message::Message(const ep::ObjectNode* node)
+Message::Message(const ObjectNode &node, std::vector<int32_t> streamed_nodes)
     : NodeTree(node),
       size_(0)
 {
-  queue_node_list_.clear();
-  for (auto n : node_list_) {
-    if (n->isDataNode()) {
-      ep::DataNode* data_node = static_cast<ep::DataNode*>(n);
-      if (data_node->isStreamed()) {
-        data_node->setOffset(size_);
-        queue_node_list_.push_back(data_node);
-        size_ += data_node->size();
+  for (auto index : streamed_nodes) {
+    if (index >= 0 && index < length()) {
+      Node *node = operator[](index);
+      if (node->isDataNode()) {
+        epf::DataNode *data_node = static_cast<epf::DataNode *>(node);
+        if (!data_node->memMgmt()) {
+          streamed_nodes_.push_back(index);
+          size_ += data_node->size();
+        }
       }
     }
   }
 }
 
-Message::Message(const Message& msg)
+Message::Message(const Message &msg)
     : NodeTree(msg)
 {
   *this = msg;
 }
 
-const ep::ObjectNode& Message::rootNode()
+const epf::ObjectNode &Message::rootNode()
 {
   return root();
 }
@@ -44,55 +45,105 @@ std::size_t Message::size() const
   return size_;
 }
 
-ep::Node2* Message::item(const std::size_t item_index) const
+epf::Node *Message::item(const std::size_t item_index) const
 {
-  // printf"item \n");
-  ep::Node2* node = root().references()[item_index].address();
+  const auto &refs = root().references();
+
+  if (item_index >= refs.size()) {
+    std::cerr << "Message: Item index is out of bounds" << std::endl;
+    return nullptr;
+  }
+
+  epf::Node *node = refs[item_index].address();
+  if (!node) {
+    std::cerr << "Message: Address returned a nullptr" << std::endl;
+    return nullptr;
+  }
+
   return node;
 }
 
-const Message& Message::operator=(const Message& obj)
+epf::Node *Message::item(int32_t item_index) const
+{
+  if (item_index < 0) {
+    std::cerr << "Message: Item index is out of bounds" << std::endl;
+    return nullptr;
+  }
+
+  return item(static_cast<std::size_t>(item_index));
+}
+
+epf::Node *Message::item(std::string name) const
+{
+  const auto &refs = root().references();
+
+  for (const auto &ref : refs) {
+    epf::Node *node = ref.address();
+    if (!node) {
+      std::cerr << "Message: Address returned a nullptr" << std::endl;
+      continue;
+    }
+
+    if (node->name() == name) {
+      return node;
+    }
+  }
+
+  std::cerr << "Message: Item with name '" << name << "' not found"
+            << std::endl;
+  return nullptr;
+}
+
+const Message &Message::operator=(const Message &obj)
 {
   NodeTree::operator=(obj);
 
-  // add to QueuedNoded
-  size_ = 0;
-  for (auto n : node_list_)
-    if (n->isDataNode()) {  // ¿TODO do this check in a MACRO?
-      ep::DataNode* node = static_cast<ep::DataNode*>(n);
-      if (node->isStreamed()) {
-        node->setOffset(size_);
-        queue_node_list_.push_back(node);
-        size_ += node->size();
-      }
-    }
-
+  streamed_nodes_ = obj.streamed_nodes_;
+  size_ = obj.size_;
   return *this;
 }
 
-void Message::addItem(ep::Node2* node, ep::RefType reference_type)
+void Message::addItem(std::unique_ptr<epf::Node> node,
+                      epf::RefType reference_type)
 {
-  add(node, reference_type);
-
-  queue_node_list_.clear();
-
-  // add to QueuedNoded
-  size_ = 0;
-  for (auto n : node_list_)
-    if (n->isDataNode()) {
-      ep::DataNode* node = static_cast<ep::DataNode*>(n);
-      if (node->isStreamed()) {
-        node->setOffset(size_);
-        queue_node_list_.push_back(node);
-        size_ += node->size();
+  int32_t parent_index = add(std::move(node), reference_type);
+  for (int32_t i = parent_index; i < length(); i++) {
+    Node *added_node = operator[](i);
+    if (added_node->isDataNode()) {
+      epf::DataNode *data_node = static_cast<epf::DataNode *>(added_node);
+      if (!data_node->memMgmt()) {
+        streamed_nodes_.push_back(i);
+        size_ += data_node->size();
       }
     }
+  }
 }
 
-void Message::updateMessage(char* pointer)
+size_t Message::streamedNodeOffset(const DataNode *node) const
 {
-  for (auto node : this->queue_node_list_) {
-    node->setPtrMsg(pointer);
-    node->setValue(node->offset() + pointer);
+  int32_t offset = 0;
+  for (auto index : this->streamed_nodes_) {
+    // node->setPtrMsg(pointer);
+    DataNode *data_node = static_cast<DataNode *>(operator[](index));
+
+    if (data_node == node) {
+      return offset;
+    }
+    offset += static_cast<int32_t>(data_node->size());
+  }
+
+  std::cerr << "[Message] Streamed node not found." << std::endl;
+
+  return 0;
+}
+
+void Message::updateMessage(char *pointer)
+{
+  int32_t offset = 0;
+  for (auto index : this->streamed_nodes_) {
+    // node->setPtrMsg(pointer);
+    DataNode *data_node = static_cast<DataNode *>(operator[](index));
+    data_node->setValue(offset + pointer);
+    offset += static_cast<int32_t>(data_node->size());
   }
 }

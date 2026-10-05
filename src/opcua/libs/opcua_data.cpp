@@ -4,10 +4,10 @@
 
 #include "opcua_data.h"
 
-
-ep::BaseType ep::opcuatype_to_basetype(const UA_DataType* datatype)
+std::optional<epf::BaseType> epf::opcuatype_to_basetype(
+    const UA_DataType *datatype)
 {
-  using namespace ep;
+  using namespace epf;
   if (datatype == &UA_TYPES[UA_TYPES_BOOLEAN]) {
     return EP_BOOL;
   }
@@ -42,13 +42,13 @@ ep::BaseType ep::opcuatype_to_basetype(const UA_DataType* datatype)
     return EP_64F;
   }
   else {
-    return EP_32S;
+    return std::nullopt;
   }
 }
 
-const UA_DataType* ep::basetype_to_opcuatype(ep::BaseType datatype)
+const UA_DataType *epf::basetype_to_opcuatype(epf::BaseType datatype)
 {
-  using namespace ep;
+  using namespace epf;
   switch (datatype) {
     case EP_BOOL:
       return &UA_TYPES[UA_TYPES_BOOLEAN];
@@ -85,9 +85,6 @@ const UA_DataType* ep::basetype_to_opcuatype(ep::BaseType datatype)
       break;
     case EP_64F:
       return &UA_TYPES[UA_TYPES_DOUBLE];
-      break;
-    case EP_STRING:
-      return &UA_TYPES[UA_TYPES_STRING];
       break;
     default:
       return nullptr;

@@ -10,6 +10,9 @@
 #include <stdlib.h>
 #include <yaml-cpp/yaml.h>
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -20,138 +23,200 @@
 #include "queue.h"
 #include "queue_handlers.h"
 #include "settings.h"
+#include "signals.h"
 
-namespace ep {
+namespace epf {
 
-/**
- * @brief Enum to represent the filter states.
- */
-enum FilterState {
-  DISCONNECTED = 0b0000001,
-  CONNECTED = 0b0000010,
-  SET = 0b0000100,
-  RUNNING = 0b0001000,
-};
-
-std::string state2string(const FilterState &state);
-
-/**
- * @brief Enum to represent different job execution models for the filter.
- */
-enum JobExecutionModel { EXTERNAL_THREAD, OWN_THREAD, MAIN_LOOP };
-
-class Filter;
-
-// SinkQueueSettings class
-class SinkQueueSettings {
-  public:
-    int length_{10};                   // Default length
-    int max_readers_{5};               // Default max readers
-    int max_writers_{1};               // Default max writers
-    QueueType type_{QueueType::lifo};  // Default queue type
-
-    SinkQueueSettings() = default;
-    SinkQueueSettings(int len, int max_readers, int max_writers, QueueType type)
-        : length_(len),
-          max_readers_(max_readers),
-          max_writers_(max_writers),
-          type_(type)
-    {
-    }
-    void reset()
-    {
-      length_ = 10;             // Default length
-      max_readers_ = 5;         // Default max readers
-      max_writers_ = 1;         // Default max writers
-      type_ = QueueType::lifo;  // Default queue type
-    }
-};
-
-// QueueHandlerSettings structure
-struct QueueHandlerSettings {
-    int batch_{1};          // Default batch size
-    int new_per_batch_{1};  // Default items added per batch
-    bool blocking_{true};   // Default to blocking mode
-
-    QueueHandlerSettings() = default;
-    QueueHandlerSettings(int b, int npb, bool blk)
-        : batch_(b),
-          new_per_batch_(npb),
-          blocking_(blk)
-    {
-    }
-    void reset()
-    {
-      batch_ = 1;          // Default batch size
-      new_per_batch_ = 1;  // Default items added per batch
-      blocking_ = true;    // Default to blocking mode
-    }
-};
+class Pipeline;
 
 // SinkPort class
 class SinkPort {
   public:
-    //    bool connected_{false};
-    SinkQueueSettings queue_settings_;
-    QueueHandlerSettings writer_settings_;
-    QueueWriter *writer_{nullptr};
-    std::shared_ptr<Queue> queue_{nullptr};
+    // Constructs a SinkPort with default settings.
+    explicit SinkPort() = default;
 
-    explicit SinkPort(
-        const SinkQueueSettings &q_settings = SinkQueueSettings(),
-        const QueueHandlerSettings &w_settings = QueueHandlerSettings())
-        : queue_settings_(q_settings),
-          writer_settings_(w_settings)
-    {
-    }
+    // Move constructor.
+    SinkPort(SinkPort &&other) noexcept;
 
-    void reset()
-    {
-      queue_settings_.reset();
-      writer_settings_.reset();
-      delete writer_;  // unsubscribe from sink queue
-      writer_ = nullptr;
-      queue_->free();
-      queue_ = nullptr;
-    }
+    // Move assignment operator.
+    SinkPort &operator=(SinkPort &&other) noexcept;
+
+    // Copy constructor is deleted.
+    SinkPort(const SinkPort &) = delete;
+
+    // Copy assignment operator is deleted.
+    SinkPort &operator=(const SinkPort &) = delete;
+
+    // Destroys the SinkPort instance.
+    ~SinkPort() = default;
+
+    // Constructs a SinkPort with the given configuration.
+    SinkPort(int32_t length, int32_t max_readers, int32_t max_writers,
+             QueueType queue_type, int32_t batch_size, bool blocking);
+
+    // Activates the port with data and header schemas.
+    int32_t activate(std::unique_ptr<Message> data_schema,
+                     std::unique_ptr<Message> hdr_schema);
+
+    // Returns whether the port is currently activated.
+    bool isActivated();
+
+    // Returns a pointer to the internal queue.
+    Queue *queue();
+
+    // Returns a pointer to the internal writer.
+    QueueWriter *writer();
+
+    // Deactivates the port.
+    int32_t deactivate();
+
+    // Returns a reference to the queue type (changes will take effect on
+    // re-activation).
+    QueueType &queueType();
+
+    // Returns a reference to the queue length (changes will take effect on
+    // re-activation).
+    int32_t &length();
+
+    // Returns a reference to the max reader count (changes will take effect on
+    // re-activation).
+    int32_t &maxReaders();
+
+    // Returns a reference to the max writer count (changes will take effect on
+    // re-activation)..
+    int32_t &maxWriters();
+
+    // Returns a reference to the batch size (changes will take effect on
+    // re-activation)..
+    int32_t &batchSize();
+
+    // Returns a reference to the blocking flag (changes will take effect on
+    // re-activation).
+    bool &blocking();
+
+    // Returns a reference to the timestamp flag (changes will take effect on
+    // re-activation).
+    bool &timestamp();
+
+    // Enable or disable timestamping
+    int32_t setTimestamp(bool value);
+
+    // Sets the blocking mode.
+    int32_t setBlocking(bool value);
+
+  private:
+    Queue queue_;
+    QueueWriter writer_;
+
+    int32_t length_{10};                     // Default length
+    int32_t max_readers_{5};                 // Default max readers
+    int32_t max_writers_{1};                 // Default max writers
+    QueueType queue_type_{QueueType::lifo};  // Default queue type
+
+    int32_t batch_size_{1};  // Default batch size
+    bool blocking_{true};    // Default to blocking mode
+    bool timestamp_{false};  // Timestamp disabled by default
 };
 
 // SourcePort class
+// SourcePort class
 class SourcePort {
   public:
-    QueueHandlerSettings reader_settings_;
-    QueueReader *reader_{nullptr};
-    std::shared_ptr<Queue> queue_{nullptr};
-    Filter *src_filter_{nullptr};
+    // Constructs a SourcePort with default settings.
+    explicit SourcePort() = default;
 
-    explicit SourcePort(
-        const QueueHandlerSettings &r_settings = QueueHandlerSettings())
-        : reader_settings_(r_settings)
-    {
-    }
+    // Constructs a SourcePort with the given configuration.
+    SourcePort(int32_t message_window, int32_t message_stride, bool blocking);
 
-    void reset()
-    {
-      reader_settings_.reset();
-      delete reader_;  // unsubscribe from source queue
-      reader_ = nullptr;
-      queue_ = nullptr;
-      src_filter_ = nullptr;
-    }
+    // Destroys the SourcePort instance.
+    ~SourcePort();
+
+    // Connects the port to the given queue.
+    int32_t connect(Queue *q);
+
+    // Returns whether the port is currently connected.
+    bool isConnected();
+
+    // Disconnects the port and reader from the queue.
+    int32_t disconnect();
+
+    // Returns a pointer to the internal reader.
+    QueueReader *reader();
+
+    // Returns a pointer to the connected queue.
+    Queue *queue() const;
+
+    // Returns a reference to the batch size (changes will take effect on
+    // re-activation).
+    int32_t &messageWindow();
+
+    // Returns a reference to the new items per batch (changes will take effect
+    // on re-activation).
+    int32_t &messageStride();
+
+    // Returns a reference to the blocking flag (changes will take effect on
+    // re-activation)..
+    bool &blocking();
+
+    // Sets the blocking mode.
+    int32_t setBlocking(bool value);
+
+  private:
+    Queue *queue_{nullptr};
+    QueueReader reader_;
+
+    int32_t message_window_{1};  // Default batch size
+    int32_t message_stride_{1};  // Default items added per batch
+    bool blocking_{true};        // Default to blocking mode
 };
 
 // Filter class
 class Filter {
   public:
+    using SettingsSignal = fteng::signal<void(
+        const Filter &, uint64_t, SettingsChangeKind, const std::string &)>;
+    using StateSignal = fteng::signal<void(const Filter &, FilterState,
+                                           FilterState, const std::string &)>;
+    using ErrorSignal =
+        fteng::signal<void(const Filter &, const std::string &)>;
+
     /**
      * @brief Default constructor. Initializes the Filter instance.
      */
-    Filter();
+    explicit Filter(YAML::Node config = YAML::Node(), int32_t n_sources = 1,
+                    int32_t n_sinks = 1);
 
     /**
      * @brief Destructor. Cleans up resources used by the Filter instance.
      */
     virtual ~Filter();
+
+    /** @brief Retrieves the execution mode of the job
+     * @return jobExecutionModel
+     */
+    JobExecutionModel jobExecutionModel() const;
+
+    /**
+     * @brief Retrieves the current state of the filter.
+     * @return Current state of the filter.
+     */
+    FilterState state() const;
+
+    /**
+     * @brief Retrieves the name of the filter.
+     * @return Name of the filter.
+     */
+    const std::string &name() const;
+
+    const SettingsSignal &settingsChanged() const;
+    const StateSignal &stateChanged() const;
+    const ErrorSignal &errorOccurred() const;
+
+    uint64_t settingsRevision() const;
+
+    int32_t maxSources() const;
+
+    int32_t maxSinks() const;
 
     /**
      * @brief Establishes a connection with a device (if applicable).
@@ -170,8 +235,14 @@ class Filter {
     int32_t set();
 
     /**
-     * @brief Resets data sinks and releases resources.
-     *        Transitions the Filter to the connected state.
+     * @brief Resets runtime connectivity and releases runtime resources.
+     *        This method is intentionally self-contained so a Filter can be
+     *        used safely without a Pipeline instance.
+     *        Sink/source port vectors are preserved (topology), while queue
+     *        activation/subscriptions are cleared.
+     *        Reset teardown is guarded/idempotent, so repeated
+     *        disconnect/deactivate calls are acceptable by design.
+     *        Valid transition is SET -> CONNECTED.
      * @return Error code indicating success or failure.
      */
     int32_t reset();
@@ -184,14 +255,19 @@ class Filter {
     int32_t start();
 
     /**
-     * @brief Stops the thread. Disables job execution.
-     *        Transitions the Filter to the stopped state.
+     * @brief Requests stop of job execution.
+     *        Valid transition is RUNNING -> STOP_REQUEST.
+     *        Convergence to SET happens later (normally via doJob()/ _stop()
+     *        and guaranteed by Pipeline::join() for pipeline-managed filters).
      * @return Error code indicating success or failure.
      */
     int32_t stop();
 
     /**
      * @brief Closes communication with the device (if applicable).
+     *        If needed, normalizes lifecycle first:
+     *        RUNNING -> STOP_REQUEST -> SET -> CONNECTED
+     *        then invokes the virtual close path.
      *        Transitions the Filter to the disconnected state.
      * @return Error code indicating success or failure.
      */
@@ -211,6 +287,24 @@ class Filter {
     int32_t doJob();
 
     /**
+     * @brief Completes a pending stop transition, if currently requested.
+     *
+     * If the filter is in STOP_REQUEST, this executes the stop-completion
+     * path (_stop() + STOP_REQUEST->SET state convergence) and emits the
+     * regular stateChanged signal when convergence happens.
+     *
+     * This helper is used by worker execution (doJob()) and by pipeline
+     * post-join convergence so stop completion behavior remains consistent.
+     *
+     * @param reason Reason string used for stateChanged emission when
+     * convergence occurs.
+     * @return 0 if stop completion succeeded or no completion was needed, -1
+     * when _stop() reported an error.
+     */
+    int32_t completeStopTransitionIfRequested(
+        const std::string &reason = "job stop");
+
+    /**
      * @brief Adds a setting to the filter.
      * @tparam T Type of the setting value.
      * @param name Name of the setting.
@@ -222,31 +316,18 @@ class Filter {
      */
     template <typename T>
     int32_t addSetting(std::string name, T &value,
-                       ep::SettingType setting_type = ep::FILTER_SETTING,
-                       std::string tooltip = "", AccessType accessmode = ep::W)
-    {
-      // check if setting exists in device getting value
-      if (setting_type == DEVICE_SETTING) {
-        int err = deviceSettingValue(name.c_str(), static_cast<void *>(&value));
-        if (err < 0) {
-          std::cout << "addDeviceSetting: " << name << " [FAILED]" << std::endl;
-          return err;
-        }
-      }
-
-      settings_.addSetting(name, value, setting_type, tooltip, accessmode);
-
-      return 0;
-    }
+                       epf::SettingType setting_type = epf::BASE_SETTING,
+                       std::string tooltip = "",
+                       AccessType accessmode = epf::W);
 
     /**
-     * @brief Adds a command to the filter's settings object.
-     * @param name Key name of the command.
-     * @param command Function without arguments that returns an error code.
-     * @return Error code indicating success or failure.
+     * @brief Retrieves the value of a setting.
+     * @tparam T Type of the setting value.
+     * @param name Name of the setting.
+     * @return Pointer to the setting value, or null if not found.
      */
-    int32_t addCommand(std::string name, std::function<int32_t()> command,
-                       std::string tooltip = "", AccessType accesstype = ep::W);
+    template <typename T>
+    const T *settingValue(std::string name);
 
     /**
      * @brief Sets the setting value belonging to the device.
@@ -282,63 +363,25 @@ class Filter {
      * @return Error code indicating success or failure.
      */
     template <typename T>
-    int32_t setSettingValue(std::string name, T value)
-    {
-      int32_t ret = 0;
-      if (settings_.settingAccessMode(name) & state_) {
-        if (settings_.isDeviceSetting(name)) {
-          if constexpr (std::is_same<T, std::string>::value)
-            ret = setDeviceSettingValueStr(name.c_str(), value.c_str());
-          else
-            ret = setDeviceSettingValue(name.c_str(), &value);
-          if (ret >= 0) ret = settings_.setValue<T>(name, value);
-          return ret;
-        }
-        else {
-          ret = settings_.setValue<T>(name, value);
-          if (ret < 0) std::cout << "setSettingValue: failed." << std::endl;
-          return ret;
-        }
-      }
-      else {
-        std::cout << "Not allowed to set setting " << name
-                  << " in \"state_=" << state2string(state_) << "\"."
-                  << std::endl;
-        return -1;
-      }
-    }
-
-    /**
-     * @brief Retrieves the value of a setting.
-     * @tparam T Type of the setting value.
-     * @param name Name of the setting.
-     * @return Pointer to the setting value, or null if not found.
-     */
-    template <typename T>
-    const T *settingValue(std::string name)
-    {
-      T value;
-      if (settings_.isDeviceSetting(name)) {
-        if constexpr (std::is_same<T, std::string>::value) {
-          char placeholder[256];
-          deviceSettingValue(name.c_str(), placeholder);
-          value = std::string(placeholder);
-          setSettingValue<T>(name, value);
-        }
-        else {
-          deviceSettingValue(name.c_str(), &value);
-          setSettingValue<T>(name, value);
-        }
-      }
-      return settings_.value<T>(name);
-    }
+    int32_t setSettingValue(std::string name, T value);
 
     /**
      * @brief Retrieves the node associated with a setting.
      * @param name Name of the setting.
      * @return Pointer to the setting node, or null if not found.
      */
-    const Node2 *settingNode(std::string &name) const;
+    const Node *settingNode(std::string &name) const;
+
+    /**
+     * @brief Adds a command to the filter's settings object.
+     * @param name Key name of the command.
+     * @param command Function without arguments that returns an error code.
+     * @return Error code indicating success or failure.
+     */
+    int32_t addCommand(std::string name, std::function<int32_t()> command,
+                       epf::SettingType setting_type = epf::CONTROL_SETTING,
+                       std::string tooltip = "",
+                       AccessType accesstype = epf::W);
 
     /**
      * @brief Executes a command associated with the filter.
@@ -348,18 +391,17 @@ class Filter {
     int32_t runCommand(std::string name);
 
     /**
+     * @brief Retrieves the settings object of the filter.
+     * @return Pointer to the Settings object.
+     */
+    const Settings *settings() const;
+
+    /**
      * @brief Reads settings from a YAML configuration node.
      * @param config YAML node containing the configuration.
      * @return Error code indicating success or failure.
      */
     int32_t readSettings(const YAML::Node &config);
-
-    /**
-     * @brief Reads device-specific settings from a YAML configuration node.
-     * @param config YAML node containing the configuration.
-     * @return Error code indicating success or failure.
-     */
-    int32_t readDeviceSettings(const YAML::Node &config);
 
     /**
      * @brief Writes settings to a YAML configuration node.
@@ -389,85 +431,41 @@ class Filter {
      * @param src_filter Pointer to the source filter (optional).
      * @return Error code indicating success or failure.
      */
-    int32_t connectSourceQueue(int port_index, std::shared_ptr<Queue> q,
-                               Filter *src_filter = nullptr);
+    int32_t connect(int src_port_index, SinkPort *sink_port);
 
     /**
      * @brief Retrieves a list of connected source port indices.
      * @return Vector of connected source port indices.
      */
-    std::vector<int> connectedSources() const;
+    //    std::vector<int> connectedSources();
+    std::vector<int> connectedSources();
 
     /**
      * @brief Retrieves a list of connected sink port indices.
      * @return Vector of connected sink port indices.
      */
-    std::vector<int> connectedSinks() const;
+    std::vector<int> activatedSinks();
 
     /**
-     * @brief Retrieves the number of sink ports.
-     * @return Number of sink ports.
+     * @brief Connects a source filter to the current filter.
+     * @param src_filter Pointer to the source filter.
+     * @return Error code indicating success or failure.
      */
-    int32_t sinkPorts() const;
+    int32_t connectSourceFilter(Filter *src_filter);
 
-    /**
-     * @brief Retrieves the number of source ports.
-     * @return Number of source ports.
-     */
-    int32_t sourcePorts() const;
+    // Accessing filter's sinks ports. Returning nullptr if fails.
+    SinkPort *sinkPort(int32_t port_index) noexcept;
 
-    /**
-     * @brief Retrieves the writer associated with a specific port.
-     * @param port_index Index of the port.
-     * @return Pointer to the QueueWriter object, or null if not found.
-     */
-    QueueWriter *writer(int port_index);
-
-    /**
-     * @brief Retrieves the reader associated with a specific port.
-     * @param port_index Index of the port.
-     * @return Pointer to the QueueReader object, or null if not found.
-     */
-    QueueReader *reader(int port_index);
-
-    /**
-     * @brief Retrieves the sink queue associated with a specific port.
-     * @param port_index Index of the port.
-     * @return Pointer to the Queue object, or null if not found.
-     */
-    std::shared_ptr<Queue> sinkQueue(int port_index) const;
-
-    /**
-     * @brief Retrieves the source queue associated with a specific port.
-     * @param port_index Index of the port.
-     * @return Pointer to the Queue object, or null if not found.
-     */
-    std::shared_ptr<Queue> sourceQueue(int port_index) const;
-
-    /** @brief Retrieves the execution mode of the job
-     * @return jobExecutionModel
-     */
-    JobExecutionModel jobExecutionModel() const;
-
-    /**
-     * @brief Retrieves the current state of the filter.
-     * @return Current state of the filter.
-     */
-    const FilterState &state();
-
-    /**
-     * @brief Retrieves the name of the filter.
-     * @return Name of the filter.
-     */
-    const std::string &name();
-
-    /**
-     * @brief Retrieves the settings object of the filter.
-     * @return Pointer to the Settings2 object.
-     */
-    const Settings2 *settings();
+    // Accessing filter's source ports. Returning nullptr if fails.
+    SourcePort *sourcePort(int32_t port_index) noexcept;
 
   protected:
+    void notifySettingsChanged(SettingsChangeKind kind,
+                               const std::string &reason);
+    void notifyStateChanged(FilterState old_state, FilterState new_state,
+                            const std::string &reason);
+    void notifyErrorOccurred(const std::string &reason);
+
     /**
      * @brief Starts the filter (internal implementation).
      *        Should be overridden by derived classes.
@@ -518,47 +516,67 @@ class Filter {
     virtual int32_t _job() = 0;
 
     /**
-     * @brief Adds a sink queue at a specific port.
-     * @param port Index of the port.
-     * @param data_schema Pointer to the message schema.
-     * @param hdr_schema Pointer to the header schema (optional).
+     * @brief Reads device-specific settings from a YAML configuration node.
+     * @param config YAML node containing the configuration.
      * @return Error code indicating success or failure.
      */
-    int32_t addSinkQueue(int port, Message *data_schema,
-                         Message *hdr_schema = nullptr);
+    int32_t readDeviceSettings(const YAML::Node &config);
 
-    /**
-     * @brief Connects a sink queue to a specific port.
-     * @param port_index Index of the port.
-     * @param q Pointer to the queue to connect.
-     * @return Error code indicating success or failure.
-     */
-    int32_t connectSinkQueue(int port_index, std::shared_ptr<Queue> q);
-
-    FilterState state_;                     /**< Current status of the filter */
-    pthread_mutex_t state_mtx_;             /**< Mutex for status protection */
-    std::string name_;                      /**< Name of the filter */
-    std::string type_;                      /**< Type of the filter */
-    JobExecutionModel job_execution_model_; /**< Job execution model */
-    Settings2 settings_;                    /**< Settings object */
+    //    FilterState state_;
+    std::atomic<FilterState> state_{
+        DISCONNECTED}; /**< Current status of the filter */
+    int32_t state_code_{static_cast<int32_t>(DISCONNECTED)}; /**< Numeric mirror
+                                                              * of state_ for
+                                                              * read-only
+                                                              * settings
+                                                              * exposure. */
+    pthread_mutex_t state_mtx_; /**< Protects lifecycle critical sections
+                                 * (not every state_ read). */
+    std::string type_;          /**< Type of the filter */
+    JobExecutionModel job_execution_model_{
+        EXTERNAL_THREAD};    /**< Job execution model */
+    Settings settings_;      /**< Settings object */
+    YAML::Node yaml_config_; /**< YAML configuration node */
 
     std::vector<SinkPort> sink_ports_;     /**< Vector of sink ports */
     std::vector<SourcePort> source_ports_; /**< Vector of source ports */
-    int max_sinks_{0};                     /**< Maximum number of sink ports */
-    int max_sources_{0}; /**< Maximum number of source ports */
 
-    void readQueueSettings(const YAML::Node &queue_node,
-                           SinkQueueSettings &queue_settings);
-    void readWriterSettings(const YAML::Node &writer_node,
-                            QueueHandlerSettings &writer_settings);
-    void readReaderSettings(const YAML::Node &reader_node,
-                            QueueHandlerSettings &reader_settings);
+    std::vector<Filter *>
+        src_filters_{}; /**< Runtime list of connected source filters. */
+
+    /**
+     * @brief Teardown phase 1: disconnect all source ports (readers).
+     *        Safe to call repeatedly.
+     * @return Error code indicating success or failure.
+     */
+    int32_t disconnectSourcePorts();
+
+    /**
+     * @brief Teardown phase 2: deactivate all sink ports (writers/queues).
+     *        Safe to call repeatedly.
+     * @return Error code indicating success or failure.
+     */
+    int32_t deactivateSinkPorts();
 
   private:
+    friend class Pipeline;
+
+    std::string name_;      /**< Name of the filter */
+    size_t max_sources_{1}; /**< Maximum number of source ports */
+    size_t max_sinks_{1};   /**< Maximum number of sink ports */
+
+    std::atomic<uint64_t> settings_revision_{0};
+    mutable SettingsSignal settings_changed_{};
+    mutable StateSignal state_changed_{};
+    mutable ErrorSignal error_occurred_{};
+
+    int32_t createSourcePortSettings();
+    int32_t createSinkPortSettings();
     int32_t deviceSettingsFromYAML(const YAML::Node &config);
-    int32_t deviceSettingsToYAML(YAML::Node &config);
+    int32_t disconnectSourcePortsUnsafe();
+    int32_t deactivateSinkPortsUnsafe();
 };
 
-}  // namespace ep
+}  // namespace epf
 
 #endif  // _FILTER_H

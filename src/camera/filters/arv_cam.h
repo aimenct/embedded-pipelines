@@ -2,29 +2,30 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-#ifndef _EP_ARV_CAM_H
-#define _EP_ARV_CAM_H
+#ifndef _EPF_ARV_CAM_H
+#define _EPF_ARV_CAM_H
 
 #include <arv.h>
-#include <math.h>
 
 #include <cmath>
 #include <iomanip>  // std::setw
 #include <ios>      // std::left
+#include <string>
+#include <unordered_map>
 
-#include "core.h"
+#include "../../core/core.h"
 
-namespace ep {
+namespace epf {
 class ArvCam : public Filter {
   public:
-    ArvCam(const YAML::Node &config); 
-    ~ArvCam();                  
+    ArvCam(const YAML::Node &config);
+    ~ArvCam();
 
     int findDevices();
 
     ArvStream *stream();
-    gboolean isHighPriority();
-    gboolean isRealTime();
+    bool isHighPriority() const;
+    bool isRealTime() const;
     GMainLoop *mainLoop();
     void setMainLoop(GMainLoop *main_loop);
 
@@ -35,19 +36,24 @@ class ArvCam : public Filter {
     int32_t setDeviceSettingValue(const char *key, const void *value);
     int32_t setDeviceSettingValueStr(const char *key, const char *value);
     int32_t deviceSettingValue(const char *key, void *value);
-  
+
     int addDeviceSetting(const char *setting_name);
 
     const char *geniCamXml(size_t *size);
     void parseCameraXml();
 
+    void printStatistics();
+
+    void updateHeader(Message *hdr);
+    int32_t trigger();
+
   protected:
     int32_t _job();
-    int32_t _open(); 
-    int32_t _set();  
+    int32_t _open();
+    int32_t _set();
     int32_t _start();
     int32_t _reset();
-    int32_t _stop(); 
+    int32_t _stop();
     int32_t _close();
 
     // callback for generating data when working in pull mode
@@ -57,14 +63,14 @@ class ArvCam : public Filter {
     int32_t addDeviceSettingsFromYAML(const YAML::Node &config);
 
   private:
-    YAML::Node yaml_config_;
-
     /* aravis camera & stream */
     ArvCamera *camera_;
     ArvStream *stream_;
     ArvGc *genicam_;
-  
+
     GThread *thread_;
+    gulong new_buffer_handler_id_;
+    bool stream_signals_connected_;
 
     int32_t arv_num_buffers_;
     std::string camera_name_;
@@ -73,27 +79,26 @@ class ArvCam : public Filter {
     int32_t packet_delay_;
     int32_t packet_size_;
     int32_t socket_buffer_size_;
-    uint32_t packet_timeout_;
-    uint32_t frame_retention_;
-    uint32_t bandwidth_limit_;
+    int32_t packet_timeout_;
+    int32_t frame_retention_;
+    int32_t bandwidth_limit_;
     double_t packet_request_ratio_;
-    gboolean option_push_mode_;  // todo change to c++ bool
-    gboolean auto_packet_size_;
-    gboolean auto_socket_buffer_;
-    gboolean no_packet_resend_;
-    gboolean realtime_;       // realtime todo
-    gboolean high_priority_;  // todo
-    gboolean no_packet_socket_;
+    bool auto_packet_size_;
+    bool auto_socket_buffer_;
+    bool no_packet_resend_;
+    bool realtime_;
+    bool high_priority_;
+    bool no_packet_socket_;
     char *debug_domains_;
     int32_t width_;
     int32_t height_;
     int32_t horizontal_binning_;
     int32_t vertical_binning_;
     int32_t gain_;
-    double_t software_trigger_;
+    std::string trigger_mode_{"continuous"};
+
     double_t frequency_;
     double_t exposure_time_us_;
-    gboolean snaphot_s;
 
     char args_[10][256];
     char response_[256];
@@ -108,9 +113,13 @@ class ArvCam : public Filter {
     uint16_t out_interleave_;
     uint16_t out_color_;
 
+    std::unordered_map<std::string, DataNode *> header_nodes_;
+    std::unordered_map<std::string, bool> header_string_encoded_;
+    std::unordered_map<std::string, bool> header_dirty_;
+
     std::string nameArvFeatureType(ArvGcFeatureNode *feature_node);
 };
 
-}  // namespace ep
+}  // namespace epf
 
-#endif  //_EP_ARV_CAM_H
+#endif  //_EPF_ARV_CAM_H

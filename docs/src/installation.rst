@@ -1,5 +1,5 @@
 Installation
-#############
+############
 
 Pre-requisites
 --------------
@@ -10,7 +10,7 @@ Main pre-requisites are:
 - **Compiler**: C++17 or later.
 - **CMake**: Version 3.13.0 or later.
 - **POSIX Pthreads**: For threading support.
-- **FreeGlut**: For image diplay.
+- **FreeGlut**: For image display.
 - **Yaml-cpp**: Yaml parser and emitter.
 
 You can install the necessary packages on these systems using: 
@@ -148,7 +148,7 @@ Below are the instructions to manually install the dependencies for each module 
 Dockerfile
 ^^^^^^^^^^
 
-Alternatively, to avoid cluttering your system with dependencies, the library offers a ``Dockerfile`` which defines a Docker image containing the entire environment of the library (core and its modules) ready for development and deployment. Instructions on how to install Docker can be found `here <https://docs.docker.com/engine/install/>`_ and recommended post-installation steps `here <https://docs.docker.com/engine/install/linux-postinstall/>`_. To build the image and run the container:
+Alternatively, to avoid cluttering your system with dependencies, the library offers a ``Dockerfile`` which defines a Docker image containing the entire environment of the library (core and its modules) ready for development and deployment. Follow `official instructions <https://docs.docker.com/engine/install/>`_ on how to install Docker and recommended `post-installation steps <https://docs.docker.com/engine/install/linux-postinstall/>`_. To build the image and run the container:
 
 .. code-block:: bash
 
@@ -207,8 +207,8 @@ The library provides for some example pipelines (in the *examples* folder) to de
 Usage
 -----
 
-Building with CMake
-^^^^^^^^^^^^^^^^^^^
+Building with CMake when system installed
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 For projects using CMake, here's an example `CMakeLists.txt` file that sets up the EPPF library and `yaml-cpp`. Update the paths and filenames as necessary for your project:
 
@@ -216,18 +216,48 @@ To use the library in other libraries or executables just include the headers of
 
 .. code-block:: cpp
 
-   #include <embedded-pipelines/core.h>
+   #include <embedded-pipelines/core/core.h>
 
 
 And add the following lines to your CMake file:
 
 .. code-block:: cmake
 		
-   find_package(epp 0.2.0 REQUIRED)
+   find_package(embedded-pipelines 0.4.0 REQUIRED)
 
    target_link_libraries(
    ${PROJECT_NAME}
    PUBLIC
-   embedded-pipelines::embedded-pipelines
+   ${EMBEDDED_PIPELINES_LIBRARY}
+   )
+
+Building with CMake as git submodule
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This option is more suitable when your are using an *embedded-pipelines* that is actively being developed, since you can easly pull new changes as soon as they are published. To follow this approach you just need to add the library as a git submodule of your project:
+
+.. code-block:: bash
+
+   git submodule add <url>
+
+Then you just need to add the submodule folder from the CMakeLists.txt main file:
+
+.. code-block:: cmake
+
+   add_subdirectory(your_submodules_dir/embedded-pipelines)
+
+From this point you can include the library in your sources:
+
+.. code-block:: cpp
+
+   #include "core.h"
+
+And link the library to your targets:
+
+.. code-block:: cmake	
+   
+   target_link_libraries(
+   target
+   PUBLIC embedded-pipelines
    )
 

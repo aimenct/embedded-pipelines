@@ -4,26 +4,19 @@
 
 #include "opcua_server.h"
 
-namespace ep {
-OPCUAserver::OPCUAserver(YAML::Node &config)
-    : Filter(),
-      config_(config)
-
+namespace epf {
+OPCUAserver::OPCUAserver(const YAML::Node &config)
+    : Filter(config, 10, 0)
 {
-  std::cout << "OPCUAserver constructor" << std::endl;
-
-  if ((config)["name"]) {
-    name_ = (config)["name"].as<std::string>();
-  }
+  mtx_ = std::make_unique<std::mutex>();
 
   enable_images_ = true;
+  server_url_ = "";
   server_port_ = 4840;
-  max_sources_ = 2;
 
   addSetting("enable images", enable_images_);
   addSetting("server_port", server_port_);
-
-  readSettings(config_);
+  addSetting("server_url", server_url_);
 }
 
 OPCUAserver::~OPCUAserver()
@@ -36,24 +29,46 @@ int32_t OPCUAserver::_open()
 {
   server_ = UA_Server_new();
   server_config_ = UA_Server_getConfig(server_);
+  namespace_index_ =
+      UA_Server_addNamespace(server_, "embedded:pipelines:framework");
 
   // UA_ServerConfig_setDefault(serverConfig);
   UA_ServerConfig_setMinimalCustomBuffer(server_config_, server_port_, NULL,
                                          524288000, 524288000);
 
-  UA_StatusCode retval = UA_Server_run_startup(server_);
-  if (retval != UA_STATUSCODE_GOOD) {
-    UA_Server_delete(server_);
-    return -1;
+  if (server_url_ != "") {
+    std::string full_url =
+        "opc.tcp://" + server_url_ + ":" + std::to_string(server_port_);
+    if (server_config_->serverUrlsSize > 0) {
+      UA_LOG_WARNING(server_config_->logging, UA_LOGCATEGORY_USERLAND,
+                     "Configuring custom server URL.");
+      UA_Array_delete(server_config_->serverUrls,
+                      server_config_->serverUrlsSize,
+                      &UA_TYPES[UA_TYPES_STRING]);
+      server_config_->serverUrls = NULL;
+      server_config_->serverUrlsSize = 0;
+    }
+    UA_String url_ua_string = UA_String_fromChars(full_url.c_str());
+    UA_StatusCode retval =
+        UA_Array_copy(&url_ua_string, 1, (void **)&server_config_->serverUrls,
+                      &UA_TYPES[UA_TYPES_STRING]);
+    server_config_->serverUrlsSize++;
+    UA_String_clear(&url_ua_string);
+
+    if (retval != UA_STATUSCODE_GOOD) {
+      UA_Server_delete(server_);
+      return -1;
+    }
   }
+
   return 0;
 }
 
 int32_t OPCUAserver::_set()
 {
   // Resize the queue vectors to match the OPCUA filter ports in use
-  items_to_update_.resize(max_sources_);
-  queue_node_opcua_id_.resize(max_sources_);
+  items_to_update_.resize(maxSources());
+  queue_node_opcua_id_.resize(maxSources());
 
   registerPipeline();
 
@@ -68,15 +83,14 @@ int32_t OPCUAserver::_reset()
 int32_t OPCUAserver::_close()
 {
   // The epilogue part of UA_Server_run
-  UA_StatusCode retval = UA_Server_run_shutdown(server_);
+  // UA_StatusCode retval = UA_Server_run_shutdown(server_);
 
   // UA_ServerConfig_clean(server_config);
-  UA_Server_delete(server_);
+  UA_StatusCode retval = UA_Server_delete(server_);
 
   if (retval != UA_STATUSCODE_GOOD) {
-    std::cout
-        << "Something went wrong with UA_Server_run_shutdown(), exiting..."
-        << std::endl;
+    std::cout << "Something went wrong with UA_Server_delete(), exiting..."
+              << std::endl;
   }
 
   unregisterQueues();
@@ -87,37 +101,55 @@ int32_t OPCUAserver::_close()
 
 int32_t OPCUAserver::_start()
 {
+  UA_StatusCode retval = UA_Server_run_startup(server_);
+  if (retval != UA_STATUSCODE_GOOD) {
+    UA_Server_delete(server_);
+    return -1;
+  }
   return 0;
 }
 
 int32_t OPCUAserver::_stop()
 {
+  std::cout << "OPCUAServer:  pre-UA_Server_run_shutdown()" << std::endl;
+  UA_StatusCode retval = UA_Server_run_shutdown(server_);
+  std::cout << "OPCUAServer:  stop()" << UA_StatusCode_name(retval)
+            << std::endl;
+  if (retval != UA_STATUSCODE_GOOD) {
+    UA_Server_delete(server_);
+    return -1;
+  }
   return 0;
 }
 
 int32_t OPCUAserver::_job()
 {
   // The prologue part of UA_Server_run
-
   // Executes a single iteration of the server’s main loop
-  UA_UInt16 max_timeout = UA_Server_run_iterate(server_, UA_FALSE);
+  UA_UInt16 max_timeout = UA_Server_run_iterate(server_, false);
+
+  mtx_->lock();
+  std::vector<std::vector<int32_t>> copy_items_to_update = items_to_update_;
+  for (auto &update_ports : items_to_update_) {
+    update_ports.clear();
+  }
+  mtx_->unlock();
 
   // Update the server nodes with the data from the queues
-  //  for (size_t port = 0; port < readers_.size(); port++) {
   for (size_t port = 0; port < source_ports_.size(); port++) {
-    if (!items_to_update_[port].empty()) {
-      //      int32_t err = readers_[port]->startRead();
-      int32_t err = reader(static_cast<int32_t>(port))->startRead();
-      if (err == 0) {
+    if (!copy_items_to_update[port].empty()) {
+      int32_t err =
+          sourcePort(static_cast<int32_t>(port))->reader()->startRead();
+      std::cout << "OPCUAServerReader: " << err << std::endl;
+      if (err >= 0) {
         updateServerFromQueue(static_cast<int32_t>(port),
-                              items_to_update_[port]);
-        //        readers_[port]->endRead();
-        reader(static_cast<int32_t>(port))->endRead();
+                              copy_items_to_update[port]);
+        sourcePort(static_cast<int32_t>(port))->reader()->endRead();
       }
     }
   }
   // sleep the maximum time possible for the server to work properly
-  usleep(max_timeout * 10);
+  std::this_thread::sleep_for(std::chrono::milliseconds(max_timeout / 2));
   return 0;
 }
 
@@ -127,36 +159,42 @@ int OPCUAserver::registerPipeline()
               "Registering Filters to OPCUA");
 
   UA_NodeId pipeline_id;
-  std::string folder_name = "Embedded Pipelines Pipeline";
+  std::string folder_name = "Embedded Pipeline";
   createServerFolder(UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), folder_name,
                      &pipeline_id);
+
+  for (auto src_filter : src_filters_) {
+    UA_NodeId filters_id;
+    createServerFolder(pipeline_id, src_filter->name(), &filters_id);
+    UA_NodeId folder_settings_id;
+    folder_name = "Settings";
+    createServerFolder(filters_id, folder_name, &folder_settings_id);
+    registerFilterSettings(folder_settings_id, src_filter);
+    UA_NodeId_clear(&filters_id);
+    UA_NodeId_clear(&folder_settings_id);
+  }
+
+  UA_NodeId folder_queues_id;
+  folder_name = "Server Ports";
+  createServerFolder(pipeline_id, folder_name, &folder_queues_id);
 
   // for (size_t i = 0; i < src_filters_at_ports_.size(); i++) {
   //   if (src_filters_at_ports_[i]) {
   for (size_t i = 0; i < source_ports_.size(); i++) {
-    if (source_ports_[i].src_filter_) {
-      UA_NodeId filters_id;
-      // createServerFolder(pipeline_id, src_filters_at_ports_.at(i)->name(),
-      //                    &filters_id);
-      createServerFolder(pipeline_id, source_ports_[i].src_filter_->name(),
-                         &filters_id);
+    if (source_ports_[i].queue()) {
+      UA_NodeId port_id;
+      createServerFolder(folder_queues_id, "PORT_" + std::to_string(i),
+                         &port_id);
+      std::cout << "OPCUAServer -> registering filter in port " << i
+                << std::endl;
 
-      UA_NodeId folder_settings_id;
-      folder_name = "Settings";
-      createServerFolder(filters_id, folder_name, &folder_settings_id);
-
-      UA_NodeId folder_queues_id;
-      folder_name = "Queues";
-      createServerFolder(filters_id, folder_name, &folder_queues_id);
-
-      registerFilterSettings(folder_settings_id, i);
-      registerQueues(folder_queues_id, i);
-
-      UA_NodeId_clear(&filters_id);
-      UA_NodeId_clear(&folder_settings_id);
-      UA_NodeId_clear(&folder_queues_id);
+      registerQueues(port_id, i);
+      UA_NodeId_clear(&port_id);
     }
   }
+  UA_NodeId_clear(&pipeline_id);
+  UA_NodeId_clear(&folder_queues_id);
+
   return 0;
 }
 
@@ -168,9 +206,9 @@ int32_t OPCUAserver::createServerFolder(const UA_NodeId &parent,
   attr.displayName = UA_LOCALIZEDTEXT_ALLOC(lang_code_.c_str(), name.c_str());
 
   UA_StatusCode ret = UA_Server_addObjectNode(
-      server_, UA_NODEID_NUMERIC(1, 0), parent,
+      server_, UA_NODEID_NUMERIC(namespace_index_, 0), parent,
       UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
-      UA_QUALIFIEDNAME(1, (char *)name.c_str()),
+      UA_QUALIFIEDNAME(5, (char *)name.c_str()),
       UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), attr, NULL, out_node);
 
   UA_ObjectAttributes_clear(&attr);
@@ -186,58 +224,48 @@ int32_t OPCUAserver::createServerFolder(const UA_NodeId &parent,
 }
 
 int32_t OPCUAserver::registerFilterSettings(const UA_NodeId &filter_node_id,
-                                            size_t filter_idx)
+                                            Filter *filter)
 {
   // It is necessary to copy the filter settings to include them in the OPCUA
   // server
-  // const Settings2 *filter_settings =
+  // const Settings *filter_settings =
   //     src_filters_at_ports_[filter_idx]->settings();
-  const Settings2 *filter_settings =
-      source_ports_[filter_idx].src_filter_->settings();
+  const Settings *filter_settings = filter->settings();
 
   UA_NodeId filter_settings_node_id;
-  std::string folder_name = "Filter Settings";
+  std::string folder_name = "Base";
   createServerFolder(filter_node_id, folder_name, &filter_settings_node_id);
 
   UA_NodeId device_settings_node_id;
-  folder_name = "Device Settings";
+  folder_name = "Device";
   createServerFolder(filter_node_id, folder_name, &device_settings_node_id);
 
-  UA_NodeId commands_settings_node_id;
-  folder_name = "Commands";
-  createServerFolder(filter_node_id, folder_name, &commands_settings_node_id);
+  // UA_NodeId commands_settings_node_id;
+  // folder_name = "Commands";
+  // createServerFolder(filter_node_id, folder_name,
+  // &commands_settings_node_id);
 
-  UA_NodeId queue_settings_node_id;
-  folder_name = "Queue Settings";
-  createServerFolder(filter_node_id, folder_name, &queue_settings_node_id);
+  // UA_NodeId queue_settings_node_id;
+  // folder_name = "Queue Settings";
+  // createServerFolder(filter_node_id, folder_name, &queue_settings_node_id);
 
-  for (auto &ref : (*filter_settings)["filter_settings"]->references()) {
-    ep::Node2 *node = ref.address();
-    int err = addSettingNode(node, filter_settings_node_id, filter_idx);
+  for (auto &ref : (*filter_settings)["base"]->references()) {
+    epf::Node *node = ref.address();
+    int32_t err{0};
+    if (node->isCommandNode()) {
+      err = addCommandNode(node, filter, filter_settings_node_id);
+    }
+    else {
+      err = addSettingNode(node, filter, filter_settings_node_id);
+    }
     if (err < 0) {
       std::cout << "Error adding setting node : " << node->name() << std::endl;
     }
   }
 
-  for (auto &ref : (*filter_settings)["device_settings"]->references()) {
-    ep::Node2 *node = ref.address();
-    int err = addSettingNode(node, device_settings_node_id, filter_idx);
-    if (err < 0) {
-      std::cout << "Error adding setting node : " << node->name() << std::endl;
-    }
-  }
-
-  for (auto &ref : (*filter_settings)["filter_commands"]->references()) {
-    ep::Node2 *node = ref.address();
-    int err = addCommandNode(node, commands_settings_node_id, filter_idx);
-    if (err < 0) {
-      std::cout << "Error adding setting node : " << node->name() << std::endl;
-    }
-  }
-
-  for (auto &ref : (*filter_settings)["queue_settings"]->references()) {
-    ep::Node2 *node = ref.address();
-    int err = addSettingNode(node, queue_settings_node_id, filter_idx);
+  for (auto &ref : (*filter_settings)["device"]->references()) {
+    epf::Node *node = ref.address();
+    int err = addSettingNode(node, filter, device_settings_node_id);
     if (err < 0) {
       std::cout << "Error adding setting node : " << node->name() << std::endl;
     }
@@ -246,9 +274,21 @@ int32_t OPCUAserver::registerFilterSettings(const UA_NodeId &filter_node_id,
   return 0;
 }
 
-int32_t OPCUAserver::addSettingNode(ep::Node2 *node, UA_NodeId parent_id,
-                                    size_t filter_idx)
+int32_t OPCUAserver::addSettingNode(epf::Node *node, Filter *filter,
+                                    UA_NodeId parent_id)
 {
+  std::unique_ptr<SettingsNodeContext> context =
+      std::make_unique<SettingsNodeContext>();
+  //    context->filter = src_filters_at_ports_[filter_idx];
+  context->filter = filter;
+  std::string keyname = filter->settings()->retrieveKeyName(node);
+  if (!keyname.empty()) {
+    context->node_keyname = keyname;
+  }
+  else {
+    return -1;
+  }
+
   if (node->isDataNode()) {
     UA_NodeId var_id;
 
@@ -266,23 +306,57 @@ int32_t OPCUAserver::addSettingNode(ep::Node2 *node, UA_NodeId parent_id,
     data_source.read = beforeReadSetting;
     data_source.write = afterWriteSetting;
 
-    SettingsNodeContext *context = new SettingsNodeContext;
-    //    context->filter = src_filters_at_ports_[filter_idx];
-    context->filter = source_ports_[filter_idx].src_filter_;
-    context->node_name = node->name();
-    filter_setting_contexts_.push_back(context);
-
     // Add edge setting nodes as datas sources for OPCUA nodes
     UA_StatusCode retval = UA_Server_addDataSourceVariableNode(
-        server_, UA_NODEID_NUMERIC(1, 0), parent_id,
+        server_, UA_NODEID_NUMERIC(namespace_index_, 0), parent_id,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-        UA_QUALIFIEDNAME(1, (char *)node->name().c_str()),
+        UA_QUALIFIEDNAME(namespace_index_, (char *)node->name().c_str()),
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), var_attr,
-        data_source, context, &var_id);
+        data_source, context.get(), &var_id);
 
+    filter_setting_contexts_.push_back(std::move(context));
     UA_VariableAttributes_clear(&var_attr);
 
     if (retval != UA_STATUSCODE_GOOD) {
+      std::cout << "OPCUAServer::addSettingNode failed. Ret-> "
+                << UA_StatusCode_name(retval) << std::endl;
+      return -1;
+    }
+    else {
+      return 0;
+    }
+  }
+  else if (node->isStringNode()) {
+    UA_NodeId var_id;
+
+    UA_VariableAttributes var_attr = UA_VariableAttributes_default;
+
+    var_attr.displayName =
+        UA_LOCALIZEDTEXT_ALLOC(lang_code_.c_str(), node->name().c_str());
+    var_attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    var_attr.description =
+        UA_LOCALIZEDTEXT_ALLOC(lang_code_.c_str(), node->tooltip().c_str());
+
+    // Add data sources callbacks to read/write edge settings nodes via OPCUA
+    // nodes
+    UA_DataSource data_source;
+    data_source.read = beforeReadSetting;
+    data_source.write = afterWriteSetting;
+
+    // Add edge setting nodes as datas sources for OPCUA nodes
+    UA_StatusCode retval = UA_Server_addDataSourceVariableNode(
+        server_, UA_NODEID_NUMERIC(namespace_index_, 0), parent_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(namespace_index_, (char *)node->name().c_str()),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), var_attr,
+        data_source, context.get(), &var_id);
+
+    filter_setting_contexts_.push_back(std::move(context));
+    UA_VariableAttributes_clear(&var_attr);
+
+    if (retval != UA_STATUSCODE_GOOD) {
+      std::cout << "OPCUAServer::addSettingNode failed. Ret-> "
+                << UA_StatusCode_name(retval) << std::endl;
       return -1;
     }
     else {
@@ -294,10 +368,21 @@ int32_t OPCUAserver::addSettingNode(ep::Node2 *node, UA_NodeId parent_id,
   }
 }
 
-int32_t OPCUAserver::addCommandNode(ep::Node2 *node, UA_NodeId parent_id,
-                                    size_t filter_idx)
+int32_t OPCUAserver::addCommandNode(epf::Node *node, Filter *filter,
+                                    UA_NodeId parent_id)
 {
-  if (node->nodetype() == ep::EP_COMMANDNODE) {
+  std::unique_ptr<SettingsNodeContext> context =
+      std::make_unique<SettingsNodeContext>();
+  //    context->filter = src_filters_at_ports_[filter_idx];
+  context->filter = filter;
+  std::string keyname = filter->settings()->retrieveKeyName(node);
+  if (!keyname.empty()) {
+    context->node_keyname = keyname;
+  }
+  else {
+    return -1;
+  }
+  if (node->nodetype() == epf::EP_COMMANDNODE) {
     UA_NodeId command_id;
 
     UA_MethodAttributes method_attr = UA_MethodAttributes_default;
@@ -306,19 +391,15 @@ int32_t OPCUAserver::addCommandNode(ep::Node2 *node, UA_NodeId parent_id,
     method_attr.description =
         UA_LOCALIZEDTEXT_ALLOC(lang_code_.c_str(), node->tooltip().c_str());
 
-    SettingsNodeContext *context = new SettingsNodeContext;
-    //    context->filter = src_filters_at_ports_[filter_idx];
-    context->filter = source_ports_[filter_idx].src_filter_;
-    context->node_name = node->name();
-    filter_setting_contexts_.push_back(context);
-
     // Add edge setting nodes as datas sources for OPCUA nodes
     UA_StatusCode retval = UA_Server_addMethodNode(
-        server_, UA_NODEID_NUMERIC(1, 0), parent_id,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-        UA_QUALIFIEDNAME(1, (char *)node->name().c_str()), method_attr,
-        commandMethod, 0, NULL, 0, NULL, context, &command_id);
+        server_, UA_NODEID_NUMERIC(namespace_index_, 0), parent_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCHILD),
+        UA_QUALIFIEDNAME(namespace_index_, (char *)node->name().c_str()),
+        method_attr, commandMethod, 0, NULL, 0, NULL, context.get(),
+        &command_id);
 
+    filter_setting_contexts_.push_back(std::move(context));
     UA_MethodAttributes_clear(&method_attr);
 
     std::cout << UA_StatusCode_name(retval) << std::endl;
@@ -338,15 +419,15 @@ int32_t OPCUAserver::addCommandNode(ep::Node2 *node, UA_NodeId parent_id,
 int32_t OPCUAserver::registerQueues(const UA_NodeId &filter_queues, size_t port)
 {
   //  if (port < src_filters_at_ports_.size()) {
-  if ((port < source_ports_.size()) && (source_ports_[port].src_filter_)) {
+  if ((port < source_ports_.size()) && (source_ports_[port].queue())) {
     // Filter *port_filter = src_filters_at_ports_[port];
-    Filter *port_filter = source_ports_[port].src_filter_;
-    std::cout << "Port filter is " << port_filter->name() << std::endl;
-    std::string queue_name = "Queue at port " + std::to_string(port);
+    // Filter *port_filter = source_ports_[port].src_filter_;
+    // std::cout << "Port filter is " << port_filter->name() << std::endl;
+    // std::string queue_name = "Queue at port " + std::to_string(port);
 
-    UA_NodeId queue_node_id;
-    createServerFolder(filter_queues, queue_name, &queue_node_id);
-    addQueueItems(port, queue_node_id);
+    // UA_NodeId queue_node_id;
+    // createServerFolder(filter_queues, queue_name, &queue_node_id);
+    addQueueItems(port, filter_queues);
     //    // readers_[port]->setBlockingCalls(false);
     // reader(port)->setBlockingCalls(false);
   }
@@ -366,91 +447,128 @@ int32_t OPCUAserver::unregisterQueues()
   return 0;
 }
 
-void OPCUAserver::addQueueItems(size_t port, UA_NodeId &queue_node_id)
+void OPCUAserver::addQueueItems(size_t port, const UA_NodeId &queue_node_id)
 {
-  Message *msg = this->reader(static_cast<int>(port))->dataSchema();
+  QueueReader *reader = sourcePort(static_cast<int>(port))->reader();
+  Message *msg = reader->dataSchema();
+  reader->setBlockingCalls(false);
 
   for (size_t item_index = 0; item_index != msg->itemCount(); item_index++) {
-    Node2 *node = msg->item(item_index);
+    Node *node = msg->item(item_index);
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attr.displayName =
+        UA_LOCALIZEDTEXT_ALLOC(lang_code_.c_str(), node->name().c_str());
+
     if (node->isObjectNode()) {
-      ObjectNode *object_node = (ObjectNode *)node;
-      if (object_node->objecttype() == EP_IMAGE_OBJ) {
-        // ImageObject img_node(object_node);
+      ObjectNode *object_node = static_cast<ObjectNode *>(node);
+
+      if (object_node->objecttype() == EP_IMAGE_COMPRESSED) {
+        StringNode *format =
+            static_cast<StringNode *>(object_node->references()[2].address());
+        if ((*format->value()) == "jpg" || (*(format->value()) == "MJPG")) {
+          attr.dataType = UA_TYPES[UA_TYPES_IMAGEJPG].typeId;
+          attr.valueRank = UA_VALUERANK_SCALAR;
+        }
+      }
+      else if (object_node->objecttype() == EP_IMAGE_RAW) {
+        ImageObject img = ImageObject(object_node);
+        const UA_DataType *ua_datatype = basetype_to_opcuatype(img.baseType());
+        attr.dataType = ua_datatype->typeId;
+        attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+        if (img.channels() > 1) {
+          attr.valueRank = 3;
+          attr.arrayDimensionsSize = 3;
+          attr.arrayDimensions = (UA_UInt32 *)UA_Array_new(
+              attr.arrayDimensionsSize, &UA_TYPES[UA_TYPES_UINT32]);
+          attr.arrayDimensions[0] = img.height();
+          attr.arrayDimensions[1] = img.width();
+          attr.arrayDimensions[2] = img.channels();
+        }
+        else {
+          attr.valueRank = 2;
+          attr.arrayDimensionsSize = 2;
+          attr.arrayDimensions[0] = img.height();
+          attr.arrayDimensions[1] = img.width();
+        }
       }
     }
     else if (node->isDataNode()) {
       DataNode *data_node = static_cast<DataNode *>(node);
 
-      const UA_DataType *ua_datatype =
-          basetype_to_opcuatype(data_node->datatype());
+      setDataNodeUAAttributes(&attr, data_node);
+    }
+    else {
+      UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                     "Registering variable: %s \n Type not implemented.",
+                     node->name().c_str());
+    }
 
-      // Verify all the parameters of the edge node and convert them into an
-      // OPCUA variant
-      if (ua_datatype) {
-        UA_VariableAttributes attr = UA_VariableAttributes_default;
-        attr.dataType = ua_datatype->typeId;
-        attr.accessLevel = UA_ACCESSLEVELMASK_READ;
-        attr.displayName = UA_LOCALIZEDTEXT_ALLOC(lang_code_.c_str(),
-                                                  data_node->name().c_str());
+    // attr.valueRank is set to -2 by default
+    if (attr.valueRank != UA_VALUERANK_ANY) {
+      std::unique_ptr<QueueNodeContext> context =
+          std::make_unique<QueueNodeContext>();
+      context->item_index = static_cast<int32_t>(item_index);
+      context->src_port = static_cast<int32_t>(port);
+      context->srv_ptr = this;
+      context->node_name = node->name();
 
-        if (data_node->arraydimensions()[0] == 1) {
-          attr.valueRank = UA_VALUERANK_SCALAR;
+      UA_NodeId item_node_id;
+      UA_Server_addVariableNode(
+          server_, UA_NODEID_NUMERIC(namespace_index_, 0), queue_node_id,
+          UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+          UA_QUALIFIEDNAME(namespace_index_, (char *)node->name().c_str()),
+          UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr,
+          context.get(), &item_node_id);
+
+      variable_node_contexts_.push_back(std::move(context));
+      // Add UA_NodeId to the vector containing each item correspondence
+      queue_node_opcua_id_[port].push_back(item_node_id);
+
+      // Callback definition to update the variable values before reading
+      UA_ValueCallback callback;
+      callback.onRead = beforeReadQueue;
+      callback.onWrite = afterWriteQueue;
+      UA_Server_setVariableNode_valueCallback(server_, item_node_id, callback);
+    }
+
+    // Release dynamically allocated memory in UA_VariableAtributes
+    UA_VariableAttributes_clear(&attr);
+  }
+}
+
+void OPCUAserver::setDataNodeUAAttributes(UA_VariableAttributes *attr,
+                                          const epf::DataNode *data_node)
+{
+  const UA_DataType *ua_datatype = basetype_to_opcuatype(data_node->datatype());
+
+  // Verify all the parameters of the edge node and convert them into an
+  // OPCUA variant
+  if (ua_datatype) {
+    attr->dataType = ua_datatype->typeId;
+    attr->accessLevel = UA_ACCESSLEVELMASK_READ;
+
+    if (data_node->arraydimensions()[0] == 1) {
+      attr->valueRank = UA_VALUERANK_SCALAR;
+    }
+    else if (data_node->rank() <= 3) {
+      attr->valueRank = data_node->rank();
+    }
+    else {
+      attr->valueRank = UA_VALUERANK_ONE_OR_MORE_DIMENSIONS;
+    }
+
+    if (attr->valueRank != UA_VALUERANK_SCALAR) {
+      attr->arrayDimensionsSize = data_node->arraydimensions().size();
+      if (attr->arrayDimensionsSize > 0) {
+        // UA_VariableAttributes acquires ownership of the dynamic
+        // allocated pointer
+        attr->arrayDimensions = (UA_UInt32 *)UA_Array_new(
+            attr->arrayDimensionsSize, &UA_TYPES[UA_TYPES_UINT32]);
+        for (size_t i = 0; i < data_node->arraydimensions().size(); i++) {
+          attr->arrayDimensions[i] =
+              static_cast<UA_UInt32>(data_node->arraydimensions()[i]);
         }
-        else if (data_node->rank() <= 3) {
-          attr.valueRank = data_node->rank();
-        }
-        else {
-          attr.valueRank = UA_VALUERANK_ONE_OR_MORE_DIMENSIONS;
-        }
-
-        if (attr.valueRank != UA_VALUERANK_SCALAR) {
-          attr.arrayDimensionsSize = data_node->arraydimensions().size();
-          if (attr.arrayDimensionsSize > 0) {
-            // UA_VariableAttributes acquires ownership of the dynamic
-            // allocated pointer
-            attr.arrayDimensions = (UA_UInt32 *)UA_Array_new(
-                attr.arrayDimensionsSize, &UA_TYPES[UA_TYPES_UINT32]);
-            for (size_t i = 0; i < data_node->arraydimensions().size(); i++) {
-              attr.arrayDimensions[i] =
-                  static_cast<UA_UInt32>(data_node->arraydimensions()[i]);
-            }
-          }
-        }
-
-        QueueNodeContext *context = new QueueNodeContext;
-        context->item_index = static_cast<int32_t>(item_index);
-        context->src_port = static_cast<int32_t>(port);
-        context->srv_ptr = this;
-        context->node_name = data_node->name();
-        variable_node_contexts_.push_back(context);
-
-        UA_NodeId item_node_id;
-
-        UA_Server_addVariableNode(
-            server_, UA_NODEID_NUMERIC(1, 0), queue_node_id,
-            UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-            UA_QUALIFIEDNAME(1, (char *)data_node->name().c_str()),
-            UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr, context,
-            &item_node_id);
-
-        // Add UA_NodeId to the vector containing each item correspondence
-        queue_node_opcua_id_[port].push_back(item_node_id);
-
-        // Callback definition to update the variable values before reading
-        UA_ValueCallback callback;
-        callback.onRead = beforeReadQueue;
-        callback.onWrite = afterWriteQueue;
-        UA_Server_setVariableNode_valueCallback(server_, item_node_id,
-                                                callback);
-
-        // Release dynamically allocated memory in UA_VariableAtributes
-        UA_VariableAttributes_clear(&attr);
-      }
-      else {
-        UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                       "Registering variable: %s \n Type not implemented: %s",
-                       data_node->name().c_str(),
-                       basetype_to_string(data_node->datatype()).c_str());
       }
     }
   }
@@ -458,12 +576,6 @@ void OPCUAserver::addQueueItems(size_t port, UA_NodeId &queue_node_id)
 
 int32_t OPCUAserver::unregisterFilters()
 {
-  for (auto settings_context : filter_setting_contexts_) {
-    delete settings_context;
-  }
-  for (auto context : variable_node_contexts_) {
-    delete context;
-  }
   variable_node_contexts_.clear();
   filter_setting_contexts_.clear();
 
@@ -482,13 +594,13 @@ UA_StatusCode OPCUAserver::commandMethod(
   SettingsNodeContext *context =
       static_cast<SettingsNodeContext *>(method_context);
   UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Executing command: %s",
-              context->node_name.c_str());
+              context->node_keyname.c_str());
 
-  int32_t ret = context->filter->runCommand(context->node_name);
+  int32_t ret = context->filter->runCommand(context->node_keyname);
 
   if (ret < 0) {
     UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Command: %s failed.",
-                context->node_name.c_str());
+                context->node_keyname.c_str());
     return UA_STATUSCODE_BADUNEXPECTEDERROR;
   }
   return UA_STATUSCODE_GOOD;
@@ -507,34 +619,34 @@ UA_StatusCode OPCUAserver::beforeReadSetting(
   //             "Received READ request for Node: %s",
   //             context->node_name.c_str());
 
-  const Node2 *setting_node = context->filter->settingNode(context->node_name);
+  const Node *setting_node =
+      context->filter->settingNode(context->node_keyname);
+  data_value->hasValue = false;
 
+  UA_StatusCode retval = -1;
   if (setting_node != NULL && setting_node->isDataNode()) {
     const DataNode *setting_datanode =
         static_cast<const DataNode *>(setting_node);
 
-    UA_StatusCode retval;
+    retval = UA_Variant_setScalarCopy(
+        &data_value->value, setting_datanode->value(),
+        basetype_to_opcuatype(setting_datanode->datatype()));
+  }
+  else if (setting_node != NULL && setting_node->isStringNode()) {
+    const StringNode *setting_stringnode =
+        static_cast<const StringNode *>(setting_node);
+    UA_String ua_string =
+        UA_String_fromChars(setting_stringnode->value()->c_str());
+    retval = UA_Variant_setScalarCopy(&data_value->value, &ua_string,
+                                      &UA_TYPES[UA_TYPES_STRING]);
+    UA_String_clear(&ua_string);
+  }
 
-    if (setting_datanode->datatype() != EP_STRING) {
-      retval = UA_Variant_setScalarCopy(
-          &data_value->value, setting_datanode->value(),
-          basetype_to_opcuatype(setting_datanode->datatype()));
-    }
-    else {
-      UA_String ua_string = UA_String_fromChars(
-          static_cast<std::string *>(setting_datanode->value())->c_str());
-      retval = UA_Variant_setScalarCopy(
-          &data_value->value, &ua_string,
-          basetype_to_opcuatype(setting_datanode->datatype()));
-      UA_String_clear(&ua_string);
-    }
-
-    if (retval != UA_STATUSCODE_GOOD) {
-      UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                     "Error reading setting node %s",
-                     context->node_name.c_str());
-      return retval;
-    }
+  if (retval != UA_STATUSCODE_GOOD) {
+    UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                   "Error reading setting node %s",
+                   context->node_keyname.c_str());
+    return retval;
   }
   data_value->hasValue = true;
 
@@ -554,60 +666,59 @@ UA_StatusCode OPCUAserver::afterWriteSetting(UA_Server * /*server*/,
 
   UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
               "Received WRITE request for Node: %s",
-              context->node_name.c_str());
+              context->node_keyname.c_str());
 
   // Check the edge type and write the new value to the node setting in the
   // filter
-  BaseType setting_type = opcuatype_to_basetype(data->value.type);
-  int ret = -1;
-  if (setting_type == EP_8U) {
-    ret = context->filter->setSettingValue(context->node_name,
+  int32_t ret = -1;
+  if (data->value.type == &UA_TYPES[UA_TYPES_BOOLEAN]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
+                                           *(bool *)data->value.data);
+  }
+  else if (data->value.type == &UA_TYPES[UA_TYPES_BYTE]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(uint8_t *)data->value.data);
   }
-  else if (setting_type == EP_8S) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_SBYTE]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(int8_t *)data->value.data);
   }
-  else if (setting_type == EP_16U) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_UINT16]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(uint16_t *)data->value.data);
   }
-  else if (setting_type == EP_16S) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_INT16]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(int16_t *)data->value.data);
   }
-  else if (setting_type == EP_32U) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_UINT32]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(uint32_t *)data->value.data);
   }
-  else if (setting_type == EP_32S) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_INT32]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(int32_t *)data->value.data);
   }
-  else if (setting_type == EP_64U) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_UINT64]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(uint64_t *)data->value.data);
   }
-  else if (setting_type == EP_64S) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_INT64]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(int64_t *)data->value.data);
   }
-  else if (setting_type == EP_32F) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_FLOAT]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(float *)data->value.data);
   }
-  else if (setting_type == EP_64F) {
-    ret = context->filter->setSettingValue(context->node_name,
+  else if (data->value.type == &UA_TYPES[UA_TYPES_DOUBLE]) {
+    ret = context->filter->setSettingValue(context->node_keyname,
                                            *(double *)data->value.data);
   }
-  else if (setting_type == EP_8C) {
-    ret = context->filter->setSettingValue(context->node_name,
-                                           *(char *)data->value.data);
-  }
-  else if (setting_type == EP_STRING) {
+  else if (data->value.type == &UA_TYPES[UA_TYPES_STRING]) {
     UA_String *ua_string = (UA_String *)data->value.data;
     std::string std_string((char *)ua_string->data, ua_string->length);
-    ret = context->filter->setSettingValue(context->node_name, std_string);
+    ret = context->filter->setSettingValue(context->node_keyname, std_string);
   }
 
   if (ret == 0) {
@@ -615,7 +726,7 @@ UA_StatusCode OPCUAserver::afterWriteSetting(UA_Server * /*server*/,
   }
   else {
     UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                   "Error writing node %s", context->node_name.c_str());
+                   "Error writing node %s", context->node_keyname.c_str());
     return UA_STATUSCODE_BADINTERNALERROR;
   }
 }
@@ -641,9 +752,14 @@ void OPCUAserver::beforeReadQueue(UA_Server * /*server*/,
     int32_t item_index = context->item_index;
 
     // Add node to the list of nodes to be updated
+    context->srv_ptr->mtx_->lock();
     context->srv_ptr->items_to_update_[queue_port].push_back(item_index);
-    std::cout << context->srv_ptr->items_to_update_[queue_port].size()
-              << std::endl;
+    context->srv_ptr->mtx_->unlock();
+    // std::cout << "Added to update: Item->" << item_index << " Port->"
+    //           << queue_port << std::endl;
+    // std::cout << "Size Items to update -> "
+    //           << context->srv_ptr->items_to_update_[queue_port].size()
+    //           << std::endl;
   }
 }
 
@@ -665,12 +781,15 @@ void OPCUAserver::updateServerFromQueue(int32_t filter_port,
   for (int32_t item_index : updating_nodes) {
     UA_Variant variant_value;
     UA_Variant_init(&variant_value);
-    //    Node2 *node = this->reader(filter_port)->dataMsg()->item(item_index);
-    Message msg = this->reader(filter_port)->dataMsg();
-    Node2 *node = msg.item(item_index);
+    //   Node *node = this->reader(filter_port)->dataMsg()->item(item_index);
+    Message *msg = sourcePort(filter_port)->reader()->dataMsg();
+    Node *node = msg->item(item_index);
+    UA_StatusCode retval;
+
+    // std::cout << "Server update... ->" << node->name() << std::endl;
 
     if (node->isDataNode()) {
-      DataNode *data_node = (DataNode *)node;
+      DataNode *data_node = static_cast<DataNode *>(node);
       const UA_DataType *opcua_type_ptr =
           basetype_to_opcuatype(data_node->datatype());
       if (data_node->arraydimensions()[0] > 1) {
@@ -682,8 +801,9 @@ void OPCUAserver::updateServerFromQueue(int32_t filter_port,
                             opcua_type_ptr);
         variant_value.arrayDimensionsSize = data_node->arraydimensions().size();
 
-        variant_value.arrayDimensions =
-            new UA_UInt32[variant_value.arrayDimensionsSize];
+        variant_value.arrayDimensions = (UA_UInt32 *)UA_Array_new(
+            variant_value.arrayDimensionsSize, &UA_TYPES[UA_TYPES_UINT32]);
+
         for (size_t i = 0; i < data_node->arraydimensions().size(); i++) {
           variant_value.arrayDimensions[i] =
               static_cast<UA_UInt32>(data_node->arraydimensions()[i]);
@@ -693,40 +813,71 @@ void OPCUAserver::updateServerFromQueue(int32_t filter_port,
         UA_Variant_setScalar(&variant_value, data_node->value(),
                              opcua_type_ptr);
       }
-      UA_StatusCode retval = UA_Server_writeValue(
-          server_, queue_node_opcua_id_[filter_port][item_index],
-          variant_value);
-
-      if (variant_value.arrayDimensionsSize > 0) {
-        delete[] variant_value.arrayDimensions;
-      }
-
-      if (retval != UA_STATUSCODE_GOOD) {
-        std::cout << "Error updating " << data_node->name() << "Node"
-                  << ". ErrorCode: " << UA_StatusCode_name(retval) << std::endl;
-      }
+      // retval = UA_Server_writeValue(
+      //     server_, queue_node_opcua_id_[filter_port][item_index],
+      //     variant_value);
     }
     else if (node->isObjectNode()) {
-      // ObjectNode *object_node = (ObjectNode *)update_node.node;
-      // if (object_node->objecttype() == EP_IMAGE_OBJ) {
-      //   UA_ByteString jpg_image;
-      //   jpg_image.length = update_node.image_data->size();
-      //   jpg_image.data = (UA_Byte *)update_node.image_data->data();
-      //   UA_Variant_setScalarCopy(&variant_value, &jpg_image,
-      //                            &UA_TYPES[UA_TYPES_BYTESTRING]);
-      //   UA_StatusCode retval =
-      //       UA_Server_writeValue(server_, update_node.node_id,
-      //       variant_value);
-      //   if (retval != UA_STATUSCODE_GOOD) {
-      //     std::cout << "Error updating " << object_node->name() << "Node"
-      //               << std::endl;
-      //   }
-      // }
+      std::cout << "writing object... ->" << node->name() << std::endl;
+      ObjectNode *object_node = static_cast<ObjectNode *>(node);
+      if (object_node->objecttype() == EP_IMAGE_COMPRESSED) {
+        StringNode *format =
+            static_cast<StringNode *>(object_node->references()[2].address());
+        if (*format->value() == "jpg") {
+          DataNode *buffer =
+              static_cast<DataNode *>(object_node->references()[0].address());
+          DataNode *size =
+              static_cast<DataNode *>(object_node->references()[1].address());
+
+          UA_ImageJPG jpg_image;
+          jpg_image.length = *static_cast<uint64_t *>(size->value());
+          jpg_image.data = static_cast<uint8_t *>(buffer->value());
+
+          // std::cout << "JPG ---> addr: " << jpg_image.data
+          //           << " size: " << jpg_image.length << std::endl;
+
+          UA_Variant_setScalar(&variant_value, &jpg_image,
+                               &UA_TYPES[UA_TYPES_IMAGEJPG]);
+        }
+      }
+      else if (object_node->objecttype() == EP_IMAGE_RAW) {
+        ImageObject img = ImageObject(object_node);
+        const UA_DataType *ua_datatype = basetype_to_opcuatype(img.baseType());
+        UA_Variant_setArray(&variant_value, img.data(), img.bufferSize(),
+                            ua_datatype);
+        if (img.channels() > 1) {
+          variant_value.arrayDimensionsSize = 3;
+          variant_value.arrayDimensions = (UA_UInt32 *)UA_Array_new(
+              variant_value.arrayDimensionsSize, &UA_TYPES[UA_TYPES_UINT32]);
+          variant_value.arrayDimensions[0] = img.height();
+          variant_value.arrayDimensions[1] = img.width();
+          variant_value.arrayDimensions[2] = img.channels();
+        }
+        else {
+          variant_value.arrayDimensionsSize = 2;
+          variant_value.arrayDimensions[0] = img.height();
+          variant_value.arrayDimensions[1] = img.width();
+        }
+      }
     }
-    // UA_Variant_clear(&variant_value);
+    else {
+      std::cerr << "Node " << node->name() << " not supported." << std::endl;
+      return;
+    }
+
+    retval = UA_Server_writeValue(
+        server_, queue_node_opcua_id_[filter_port][item_index], variant_value);
+
+    if (retval != UA_STATUSCODE_GOOD) {
+      std::cout << "Error updating " << node->name() << "Node"
+                << ". ErrorCode: " << UA_StatusCode_name(retval) << std::endl;
+    }
+
+    if (variant_value.arrayDimensionsSize > 0) {
+      delete[] variant_value.arrayDimensions;
+    }
   }
-  updating_nodes.clear();
-  std::cout << "updating_nodes.clear()" << std::endl;
+  return;
 }
 
-}  // namespace ep
+}  // namespace epf

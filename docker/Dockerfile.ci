@@ -1,0 +1,60 @@
+FROM ubuntu:24.04 AS open62541-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libxml2-dev \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone \
+        --branch v1.5.5 \
+        --depth 1 \
+        --recurse-submodules \
+        --shallow-submodules \
+        https://github.com/open62541/open62541.git \
+        /tmp/open62541 \
+    && cmake \
+        -S /tmp/open62541 \
+        -B /tmp/open62541/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/open62541 \
+        -DBUILD_SHARED_LIBS=ON \
+        -DUA_NAMESPACE_ZERO=FULL \
+        -DUA_ENABLE_METHODCALLS=ON \
+        -DUA_ENABLE_NODEMANAGEMENT=ON \
+        -DUA_ENABLE_NODESETLOADER=ON \
+    && cmake --build /tmp/open62541/build --parallel \
+    && cmake --install /tmp/open62541/build
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CMAKE_PREFIX_PATH=/opt/open62541
+ENV LD_LIBRARY_PATH=/opt/open62541/lib
+
+COPY --from=open62541-builder /opt/open62541 /opt/open62541
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        clang \
+        clang-format \
+        clang-tidy \
+        cmake \
+        freeglut3-dev \
+        git \
+        libaravis-dev \
+        libgtest-dev \
+        libpthread-stubs0-dev \
+        libusb-1.0-0-dev \
+        libyaml-cpp-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace

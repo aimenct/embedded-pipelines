@@ -10,6 +10,7 @@ In this tutorial you will learn:
 tutorial_01.cpp
   
 .. code-block:: cpp
+	
 	// Declare the Message Pointers
 	EdgeMessage *src_msg;
 

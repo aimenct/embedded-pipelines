@@ -4,24 +4,302 @@
 
 #include "filter.h"
 
-using namespace ep;
+using namespace epf;
 
-Filter::Filter()
+SinkPort::SinkPort(SinkPort &&other) noexcept
+    : length_(other.length_),
+      max_readers_(other.max_readers_),
+      max_writers_(other.max_writers_),
+      queue_type_(other.queue_type_),
+      batch_size_(other.batch_size_),
+      blocking_(other.blocking_),
+      timestamp_(other.timestamp_)
+{
+}
+
+SinkPort &SinkPort::operator=(SinkPort &&other) noexcept
+{
+  if (this != &other) {
+    length_ = other.length_;
+    max_readers_ = other.max_readers_;
+    max_writers_ = other.max_writers_;
+    queue_type_ = other.queue_type_;
+    batch_size_ = other.batch_size_;
+    blocking_ = other.blocking_;
+    timestamp_ = other.timestamp_;
+  }
+  return *this;
+}
+
+SinkPort::SinkPort(int32_t length, int32_t max_readers, int32_t max_writers,
+                   QueueType queue_type, int32_t batch_size, bool blocking)
+    : length_(length),
+      max_readers_(max_readers),
+      max_writers_(max_writers),
+      queue_type_(queue_type),
+      batch_size_(batch_size),
+      blocking_(blocking),
+      timestamp_(false)
+{
+}
+
+int32_t SinkPort::activate(std::unique_ptr<Message> data_schema,
+                           std::unique_ptr<Message> hdr_schema)
+{
+  size_t ts_offset = 0;
+  if (timestamp_) {
+    if (!hdr_schema) {
+      hdr_schema = std::make_unique<Message>();
+    }
+    auto ts_node = std::make_unique<DataNode>("timestamp", EP_64U,
+                                              std::vector<size_t>{}, nullptr);
+    DataNode *ts_raw = ts_node.get();
+    hdr_schema->addItem(std::move(ts_node));
+    ts_offset = hdr_schema->streamedNodeOffset(ts_raw);
+  }
+
+  queue_.setType(queue_type_);
+  int32_t err = queue_.init(length_, std::move(data_schema),
+                            std::move(hdr_schema), max_readers_, max_writers_);
+  if (err < 0) {
+    std::cout << "Error init port queue" << std::endl;
+    return err;
+  }
+
+  err = writer_.subscribe(&queue_);
+  if (err < 0) {
+    std::cout << "Error init port queue" << std::endl;
+    return err;
+  }
+
+  writer_.setBatchSize(batch_size_);
+  writer_.setBlockingCalls(blocking_);
+  if (timestamp_) {
+    writer_.setTimestampOffset(ts_offset);
+  }
+  writer_.enableTimestamp(timestamp_);
+
+  return 0;
+}
+
+bool SinkPort::SinkPort::isActivated()
+{
+  if (queue_.status() == 'c') {
+    return true;
+  }
+  return false;
+}
+
+Queue *SinkPort::queue()
+{
+  return &queue_;
+}
+
+QueueWriter *SinkPort::writer()
+{
+  return &writer_;
+}
+
+int32_t SinkPort::deactivate()
+{
+  writer_.unsubscribe();
+  queue_.free();
+  return 0;
+}
+
+QueueType &SinkPort::queueType()
+{
+  return queue_type_;
+}
+
+int32_t &SinkPort::length()
+{
+  return length_;
+};
+
+int32_t &SinkPort::maxReaders()
+{
+  return max_readers_;
+}
+
+int32_t &SinkPort::maxWriters()
+{
+  return max_writers_;
+}
+
+int32_t &SinkPort::batchSize()
+{
+  return batch_size_;
+}
+bool &SinkPort::blocking()
+{
+  return blocking_;
+}
+
+bool &SinkPort::timestamp()
+{
+  return timestamp_;
+}
+
+int32_t SinkPort::setTimestamp(bool value)
+{
+  timestamp_ = value;
+  if (isActivated()) {
+    writer_.enableTimestamp(value);
+  }
+  return 0;
+}
+
+int32_t SinkPort::setBlocking(bool value)
+{
+  blocking_ = value;
+  if (isActivated()) {
+    return writer_.setBlockingCalls(value);
+  }
+  return 0;
+}
+
+SourcePort::SourcePort(int32_t message_window, int32_t message_stride,
+                       bool blocking)
+    : message_window_(message_window),
+      message_stride_(message_stride),
+      blocking_(blocking)
+{
+}
+
+SourcePort::~SourcePort()
+{
+  disconnect();
+}
+
+int32_t SourcePort::connect(Queue *q)
+{
+  if (q == nullptr) {
+    std::cerr << " SourcePort::connect(): queue expired/nullptr" << std::endl;
+    return -1;
+  }
+  int32_t err = reader_.subscribe(q);
+
+  if (err < 0) {
+    std::cerr << "SourcePort::connect(): reader subscribe err" << std::endl;
+    return -1;
+  }
+
+  queue_ = q;
+  reader_.setBlockingCalls(blocking_);
+  reader_.setMessageWindow(message_window_);
+  reader_.setMessageStride(message_stride_);
+
+  return 0;
+}
+
+bool SourcePort::isConnected()
+{
+  if (queue_ != nullptr) {
+    return true;
+  }
+  return false;
+}
+
+int32_t SourcePort::disconnect()
+{
+  if (isConnected()) {
+    reader_.unsubscribe();
+    queue_ = nullptr;
+    return 0;
+  }
+  return 0;
+}
+
+QueueReader *SourcePort::reader()
+{
+  return &reader_;
+}
+
+Queue *SourcePort::queue() const
+{
+  return queue_;
+}
+
+int32_t &SourcePort::messageWindow()
+{
+  return message_window_;
+}
+
+int32_t &SourcePort::messageStride()
+{
+  return message_stride_;
+}
+
+bool &SourcePort::blocking()
+{
+  return blocking_;
+}
+
+int32_t SourcePort::setBlocking(bool value)
+{
+  blocking_ = value;
+  if (isConnected()) {
+    return reader_.setBlockingCalls(value);
+  }
+  return 0;
+}
+
+Filter::Filter(YAML::Node config, int32_t n_sources, int32_t n_sinks)
+    : yaml_config_(config),
+      max_sources_(n_sources),
+      max_sinks_(n_sinks)
 {
   state_ = FilterState::DISCONNECTED;
+  job_execution_model_ = JobExecutionModel::EXTERNAL_THREAD;
+
+  source_ports_.resize(max_sources_);
+  sink_ports_.resize(max_sinks_);
 
   pthread_mutex_init(&state_mtx_, NULL);
 
-  name_ = "unamed";
-  job_execution_model_ = JobExecutionModel::EXTERNAL_THREAD;
-  settings_ = Settings2(name_);
+  name_ = "unnamed";
+  if (!yaml_config_.IsNull() && yaml_config_.IsMap()) {
+    if (yaml_config_["name"]) {
+      name_ = yaml_config_["name"].as<std::string>();
+    }
+  }
 
-  max_sinks_ = 0;
-  max_sources_ = 0;
+  settings_ = Settings(name_);
+  state_code_ = static_cast<int32_t>(state_.load());
+
+  addSetting("name", name_, BASE_SETTING, "filter name", epf::R);
+  addSetting("type", type_, BASE_SETTING, "filter type", epf::R);
+  addSetting("state_", state_code_, BASE_SETTING, "filter state (numeric code)",
+             epf::R);
+  addCommand("open", std::bind(&Filter::open, this), CONTROL_SETTING, "open",
+             epf::W_D);
+  addCommand("set", std::bind(&Filter::set, this), CONTROL_SETTING, "set",
+             epf::W_C);
+  addCommand("start", std::bind(&Filter::start, this), CONTROL_SETTING, "start",
+             epf::W_S);
+  addCommand("stop", std::bind(&Filter::stop, this), CONTROL_SETTING, "stop",
+             epf::W);
+  addCommand("reset", std::bind(&Filter::reset, this), CONTROL_SETTING, "reset",
+             epf::W);
+  addCommand("close", std::bind(&Filter::close, this), CONTROL_SETTING, "close",
+             epf::W);
+
+  createSourcePortSettings();
+  createSinkPortSettings();
+
+  // if (!yaml_config_.IsNull() && yaml_config_.IsMap() &&
+  //     yaml_config_["settings"]) {
+  //   readSettings(yaml_config_["settings"]);
+  // }
+  if (!yaml_config_.IsNull() && yaml_config_.IsMap()) {
+    readSettings(yaml_config_);
+  }
 }
 
 Filter::~Filter()
 {
+  pthread_mutex_destroy(&state_mtx_);
 }
 
 JobExecutionModel Filter::jobExecutionModel() const
@@ -29,149 +307,488 @@ JobExecutionModel Filter::jobExecutionModel() const
   return job_execution_model_;
 }
 
-int Filter::open()
+FilterState Filter::state() const
 {
+  return state_;
+}
+
+const std::string &Filter::name() const
+{
+  return name_;
+}
+
+const Filter::SettingsSignal &Filter::settingsChanged() const
+{
+  return settings_changed_;
+}
+
+const Filter::StateSignal &Filter::stateChanged() const
+{
+  return state_changed_;
+}
+
+const Filter::ErrorSignal &Filter::errorOccurred() const
+{
+  return error_occurred_;
+}
+
+uint64_t Filter::settingsRevision() const
+{
+  return settings_revision_.load(std::memory_order_relaxed);
+}
+
+void Filter::notifySettingsChanged(SettingsChangeKind kind,
+                                   const std::string &reason)
+{
+  const uint64_t revision =
+      settings_revision_.fetch_add(1, std::memory_order_relaxed) + 1;
+
+  // Emits on caller thread; UI must marshal to UI thread.
+  settings_changed_(*this, revision, kind, reason);
+}
+
+void Filter::notifyStateChanged(FilterState old_state, FilterState new_state,
+                                const std::string &reason)
+{
+  state_code_ = static_cast<int32_t>(new_state);
+  // Emits on caller thread; UI must marshal to UI thread.
+  state_changed_(*this, old_state, new_state, reason);
+}
+
+void Filter::notifyErrorOccurred(const std::string &reason)
+{
+  // Emits on caller thread; UI must marshal to UI thread.
+  error_occurred_(*this, reason);
+}
+
+int32_t Filter::maxSources() const
+{
+  return static_cast<int32_t>(max_sources_);
+}
+
+int32_t Filter::maxSinks() const
+{
+  return static_cast<int32_t>(max_sinks_);
+}
+
+int32_t Filter::open()
+{
+  std::string error_reason;
+  bool emit_state_changed = false;
+
   pthread_mutex_lock(&state_mtx_);
   if (state_ != FilterState::DISCONNECTED) {
+    error_reason = "open failed: invalid state";
     pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
+
+  // if (!yaml_config_.IsNull() && yaml_config_.IsMap()) {
+  //   readSettings(yaml_config_["settings"]);
+  // }
+  // else {
+  //   std::clog << "Filter \"" << name()
+  //             << "\" has not received a valid config YAML, resorting to "
+  //                "default filter config values."
+  //             << std::endl;
+  // }
 
   // virtual open()
   if (_open() < 0) {
+    error_reason = "open failed: _open";
     pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
-  sink_ports_.resize(max_sinks_);
-  source_ports_.resize(max_sources_);
-
+  // TODO: settings addQueueSettings
+  FilterState old_state = state_;
   state_ = FilterState::CONNECTED;
+  FilterState new_state = state_;
+  emit_state_changed = true;
   pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_state_changed) notifyStateChanged(old_state, new_state, "open");
   return 0;
 }
 
-int Filter::set()
+int32_t Filter::set()
 {
+  std::string error_reason;
+  bool emit_state_changed = false;
+
   pthread_mutex_lock(&state_mtx_);
   if (!((state_ == FilterState::CONNECTED) || (state_ == FilterState::SET))) {
+    error_reason = "set failed: invalid state";
     pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
   // virtual set
   if (_set() < 0) {
+    error_reason = "set failed: _set";
     pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
+  FilterState old_state = state_;
   state_ = FilterState::SET;
+  emit_state_changed = true;
   pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_state_changed) notifyStateChanged(old_state, state_, "set");
 
   return 0;
 }
 
-int Filter::reset()
+int32_t Filter::reset()
 {
+  FilterState timeout_old_state = state_;
+  FilterState timeout_new_state = state_;
+  bool emit_timeout_state_changed = false;
+  bool emit_state_changed = false;
+  bool emit_settings_changed = false;
+  std::string error_reason;
+
   pthread_mutex_lock(&state_mtx_);
+
+  if (state_ == FilterState::STOP_REQUEST) {
+    pthread_mutex_unlock(&state_mtx_);  // Unlock before waiting
+
+    auto start_time = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::milliseconds(500);  // Set a timeout
+
+    while (state_ != FilterState::SET) {
+      // std::this_thread::sleep_for(
+      //     std::chrono::milliseconds(1));  // Avoid CPU burn
+      usleep(1000);
+
+      // Timeout check
+      if (std::chrono::steady_clock::now() - start_time > timeout) {
+        std::cerr << "Warning: reset() timeout. STOP_REQUEST Forcefully "
+                     "setting state to SET.\n";
+        _stop();
+        timeout_old_state = state_;
+        state_ = FilterState::SET;  // Forcefully reset state
+        timeout_new_state = state_;
+        emit_timeout_state_changed = true;
+        break;
+      }
+    }
+
+    pthread_mutex_lock(&state_mtx_);  // Re-lock mutex before proceeding
+  }
+
   if (state_ != FilterState::SET) {
+    error_reason = "reset failed: invalid state";
     pthread_mutex_unlock(&state_mtx_);
+    if (emit_timeout_state_changed) {
+      notifyStateChanged(timeout_old_state, timeout_new_state, "reset timeout");
+    }
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
   // virtual reset
   if (_reset() < 0) {
+    error_reason = "reset failed: _reset";
     pthread_mutex_unlock(&state_mtx_);
+    if (emit_timeout_state_changed) {
+      notifyStateChanged(timeout_old_state, timeout_new_state, "reset timeout");
+    }
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
-  for (std::size_t i = 0; i < sink_ports_.size(); i++) {
-    sink_ports_[i].reset();
-  }
+  // Runtime connectivity teardown (self-contained reset path):
+  // 1) Disconnect readers/subscribers first.
+  // 2) Deactivate writer queues after all readers are gone.
+  // This local teardown is intentionally kept even when a Pipeline already
+  // performed coordinated graph teardown. Operations are guarded/idempotent,
+  // so repeated disconnect/deactivate calls are acceptable by design.
+  disconnectSourcePortsUnsafe();
+  deactivateSinkPortsUnsafe();
 
-  for (std::size_t i = 0; i < source_ports_.size(); i++) {
-    source_ports_[i].reset();
-  }
+  // Source filter subscriptions are runtime connectivity state.
+  src_filters_.clear();
+  emit_settings_changed = true;
 
+  FilterState old_state = state_;
   state_ = FilterState::CONNECTED;
+  emit_state_changed = true;
   pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_timeout_state_changed) {
+    notifyStateChanged(timeout_old_state, timeout_new_state, "reset timeout");
+  }
+  if (emit_settings_changed) {
+    notifySettingsChanged(SettingsChangeKind::StructureChanged,
+                          "runtime connectivity reset");
+  }
+  if (emit_state_changed) notifyStateChanged(old_state, state_, "reset");
   return 0;
 }
 
-int Filter::start()
+int32_t Filter::disconnectSourcePorts()
 {
   pthread_mutex_lock(&state_mtx_);
-  if (state_ != FilterState::SET) {
-    pthread_mutex_unlock(&state_mtx_);
-    return -1;
-  }
-
-  // virtual start
-  if (_start() < 0) {
-    pthread_mutex_unlock(&state_mtx_);
-    return -1;
-  }
-
-  // start thread
-  state_ = FilterState::RUNNING;
+  int32_t ret = disconnectSourcePortsUnsafe();
   pthread_mutex_unlock(&state_mtx_);
+  return ret;
+}
+
+int32_t Filter::deactivateSinkPorts()
+{
+  pthread_mutex_lock(&state_mtx_);
+  int32_t ret = deactivateSinkPortsUnsafe();
+  pthread_mutex_unlock(&state_mtx_);
+  return ret;
+}
+
+int32_t Filter::disconnectSourcePortsUnsafe()
+{
+  for (std::size_t i = 0; i < source_ports_.size(); i++) {
+    if (source_ports_[i].isConnected()) {
+      source_ports_[i].disconnect();
+    }
+  }
+  return 0;
+}
+
+int32_t Filter::deactivateSinkPortsUnsafe()
+{
+  for (std::size_t i = 0; i < sink_ports_.size(); i++) {
+    if (sink_ports_[i].isActivated()) {
+      sink_ports_[i].deactivate();
+    }
+  }
+  return 0;
+}
+
+int32_t Filter::start()
+{
+  FilterState timeout_old_state = state_;
+  FilterState timeout_new_state = state_;
+  bool emit_timeout_state_changed = false;
+  bool emit_state_changed = false;
+  std::string error_reason;
+
+  pthread_mutex_lock(&state_mtx_);
+
+  if (state_ == FilterState::STOP_REQUEST) {
+    pthread_mutex_unlock(&state_mtx_);  // Unlock before waiting
+
+    auto start_time = std::chrono::steady_clock::now();
+    constexpr auto TIMEOUT = std::chrono::milliseconds(500);  // Set a timeout
+
+    while (state_ != FilterState::SET) {
+      // std::this_thread::sleep_for(
+      //     std::chrono::milliseconds(1));  // Avoid CPU burn
+      usleep(1000);
+
+      // Timeout check
+      if (std::chrono::steady_clock::now() - start_time > TIMEOUT) {
+        std::cerr << "Warning: start() timeout. STOP_REQUEST Forcefully "
+                     "setting state to SET.\n";
+        _stop();
+        timeout_old_state = state_;
+        state_ = FilterState::SET;  // Forcefully reset state
+        timeout_new_state = state_;
+        emit_timeout_state_changed = true;
+        break;
+      }
+    }
+
+    pthread_mutex_lock(&state_mtx_);  // Re-lock mutex before proceeding
+  }
+
+  if (state_ != FilterState::SET) {
+    error_reason = "start failed: invalid state";
+    pthread_mutex_unlock(&state_mtx_);
+    if (emit_timeout_state_changed) {
+      notifyStateChanged(timeout_old_state, timeout_new_state, "start timeout");
+    }
+    notifyErrorOccurred(error_reason);
+    return -1;
+  }
+
+  // Restore runtime queue access mode (stop() forces non-blocking to wake
+  // workers); on restart we must re-apply configured blocking behavior.
+  for (size_t i = 0; i < sink_ports_.size(); ++i) {
+    if (sink_ports_[i].isActivated()) {
+      sink_ports_[i].writer()->setBlockingCalls(sink_ports_[i].blocking());
+    }
+  }
+  for (size_t i = 0; i < source_ports_.size(); ++i) {
+    if (source_ports_[i].isConnected()) {
+      source_ports_[i].reader()->setBlockingCalls(source_ports_[i].blocking());
+    }
+  }
+
+  // Virtual start
+  if (_start() < 0) {
+    error_reason = "start failed: _start";
+    pthread_mutex_unlock(&state_mtx_);
+    if (emit_timeout_state_changed) {
+      notifyStateChanged(timeout_old_state, timeout_new_state, "start timeout");
+    }
+    notifyErrorOccurred(error_reason);
+    return -1;
+  }
+
+  // Start thread
+  FilterState old_state = state_;
+  state_ = FilterState::RUNNING;
+  emit_state_changed = true;
+  pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_timeout_state_changed) {
+    notifyStateChanged(timeout_old_state, timeout_new_state, "start timeout");
+  }
+  if (emit_state_changed) notifyStateChanged(old_state, state_, "start");
 
   return 0;
 }
 
-int Filter::stop()
+int32_t Filter::stop()
 {
+  std::string error_reason;
+  bool emit_state_changed = false;
+
   pthread_mutex_lock(&state_mtx_);
   if (state_ != FilterState::RUNNING) {
+    error_reason = "stop failed: invalid state";
     pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
-  // virtual stop
-  if (_stop() < 0) {
-    pthread_mutex_unlock(&state_mtx_);
-    return -1;
-  }
+  FilterState old_state = state_;
+  state_ = FilterState::STOP_REQUEST;  // Request stop
+  emit_state_changed = true;
 
-  state_ = FilterState::SET;
+  for (size_t i = 0; i < sink_ports_.size(); ++i)
+    if (sink_ports_[i].isActivated()) {
+      sink_ports_[i].writer()->setBlockingCalls(false);
+      sink_ports_[i].writer()->wakeUp();
+    }
+
+  for (size_t i = 0; i < source_ports_.size(); ++i)
+    //    if (source_ports_[i].reader()->queue() ) {
+    //    if (source_ports_[i].isConnected()) {
+    if (source_ports_[i].isConnected()) {
+      source_ports_[i].reader()->setBlockingCalls(false);
+      source_ports_[i].reader()->wakeUp();
+    }
 
   pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_state_changed) notifyStateChanged(old_state, state_, "stop");
+
   return 0;
 }
 
-int Filter::close()
+int32_t Filter::close()
 {
+  FilterState timeout_old_state = state_;
+  FilterState timeout_new_state = state_;
+  bool emit_timeout_state_changed = false;
+  std::string error_reason;
+  bool emit_state_changed = false;
+
   pthread_mutex_lock(&state_mtx_);
+  // Lifecycle-normalizing close:
+  // RUNNING -> stop() -> SET -> reset() -> CONNECTED -> _close() ->
+  // DISCONNECTED. This preserves structural topology while clearing only
+  // runtime state in reset().
   if (state_ == FilterState::RUNNING) {
     pthread_mutex_unlock(&state_mtx_);
     if (stop() < 0) {
-      return -1;
+      notifyErrorOccurred("close warning: stop failed");
     }
+    pthread_mutex_lock(&state_mtx_);
+  }
+
+  if (state_ == FilterState::STOP_REQUEST) {
+    pthread_mutex_unlock(&state_mtx_);
+
+    auto start_time = std::chrono::steady_clock::now();
+    constexpr auto TIMEOUT = std::chrono::milliseconds(500);
+
+    while (state_ != FilterState::SET) {
+      usleep(1000);
+      if (std::chrono::steady_clock::now() - start_time > TIMEOUT) {
+        std::cerr << "Warning: close() timeout. STOP_REQUEST Forcefully "
+                     "setting state to SET.\n";
+        // Execute filter-specific stop hook outside state mutex to avoid
+        // re-entrancy/deadlock risks in custom filter implementations.
+        _stop();
+        pthread_mutex_lock(&state_mtx_);
+        timeout_old_state = state_;
+        if (state_ == FilterState::STOP_REQUEST) {
+          state_ = FilterState::SET;
+          timeout_new_state = state_;
+          emit_timeout_state_changed = true;
+        }
+        pthread_mutex_unlock(&state_mtx_);
+        break;
+      }
+    }
+
     pthread_mutex_lock(&state_mtx_);
   }
 
   if (state_ == FilterState::SET) {
     pthread_mutex_unlock(&state_mtx_);
-    if (reset() < 0) return -1;
+    if (reset() < 0) {
+      notifyErrorOccurred("close warning: reset failed");
+    }
     pthread_mutex_lock(&state_mtx_);
   }
 
-  if (state_ != FilterState::CONNECTED) {
+  if (state_ == FilterState::DISCONNECTED) {
     pthread_mutex_unlock(&state_mtx_);
+    if (emit_timeout_state_changed) {
+      notifyStateChanged(timeout_old_state, timeout_new_state, "close timeout");
+    }
+    return 0;
+  }
+
+  const bool runtime_close_possible =
+      (state_ == FilterState::CONNECTED || state_ == FilterState::SET);
+  if (!runtime_close_possible) {
+    error_reason = "close failed: invalid state";
+    pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
+
+  // close() is a best-effort final shutdown path. Before invoking _close(),
+  // clear any remaining local runtime queue connectivity so standalone
+  // filters can close safely even from partially connected states.
+  disconnectSourcePortsUnsafe();
+  deactivateSinkPortsUnsafe();
 
   // virtual close
   if (_close() < 0) {
+    error_reason = "close failed: _close";
     pthread_mutex_unlock(&state_mtx_);
+    notifyErrorOccurred(error_reason);
     return -1;
   }
 
-  sink_ports_.clear();
-  source_ports_.clear();
-
+  FilterState old_state = state_;
   state_ = FilterState::DISCONNECTED;
+  emit_state_changed = true;
   pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_timeout_state_changed) {
+    notifyStateChanged(timeout_old_state, timeout_new_state, "close timeout");
+  }
+  if (emit_state_changed) notifyStateChanged(old_state, state_, "close");
   return 0;
 }
 
@@ -184,191 +801,57 @@ void *Filter::doJob(void *self)
 
 int32_t Filter::doJob()
 {
-  return this->_job();
-}
-
-std::shared_ptr<Queue> Filter::sinkQueue(int32_t index) const
-{
-  if ((index >= 0) && (index < static_cast<int32_t>(sink_ports_.size()))) {
-    return sink_ports_[index].queue_;
+  int32_t err = -1;
+  if (state_ == FilterState::RUNNING) {
+    err = this->_job();
+    return err;
   }
-  else {
-    return nullptr;
-  }
-}
-
-std::shared_ptr<Queue> Filter::sourceQueue(int32_t index) const
-{
-  if ((index >= 0) && (index < static_cast<int32_t>(source_ports_.size()))) {
-    return source_ports_[index].queue_;
-  }
-  else {
-    return nullptr;
-  }
-}
-
-std::vector<int> Filter::connectedSources() const
-{
-  std::vector<int> connectedSources;
-  // Iterate over all possible source queues
-  for (int i = 0; i < static_cast<int>(source_ports_.size()); ++i) {
-    // Check if the source queue is connected
-    if (source_ports_[i].queue_ != nullptr) {
-      connectedSources.push_back(i);
-    }
-  }
-  return connectedSources;
-}
-
-int Filter::addSinkQueue(int port, Message *data_schema, Message *hdr_schema)
-{
-  if (port < 0) {
-    std::cerr << "TODO addSinkQueue port<0 " << std::endl;
+  else if (state_ == FilterState::STOP_REQUEST) {
+    completeStopTransitionIfRequested("job stop");
     return -1;
   }
-
-  //  instantiate sink queue
-  SinkPort &p = sink_ports_[port];
-
-  // Create a shared_ptr to manage the Queue
-  std::shared_ptr<Queue> q = std::make_shared<Queue>();
-
-  q->setQueueType(p.queue_settings_.type_);
-
-  // (Queue gets the ownership of the Message)
-  int err =
-      q->init(p.queue_settings_.length_, data_schema, hdr_schema,
-              p.queue_settings_.max_readers_, p.queue_settings_.max_writers_);
-  if (err < 0) {
-    std::cout << "Error init queue setSinkQueue" << std::endl;
-    exit(0);
-  }
-  err = connectSinkQueue(port, q);
   return err;
 }
 
-// int Filter::connectSinkQueue(int port, Queue *q)
-int Filter::connectSinkQueue(int port, std::shared_ptr<Queue> q)
+int32_t Filter::completeStopTransitionIfRequested(const std::string &reason)
 {
-  if (port < 0) {
-    std::cerr << "connectSinkQueue port<0" << std::endl;
-    return -1;
-  }
-  unsigned int u_port = port;
-
-  if ((state_ == FilterState::CONNECTED) && (u_port < sink_ports_.size())) {
-    SinkPort &p = sink_ports_[u_port];
-    p.queue_ = q;
-    p.writer_ = new QueueWriter(q);
-    p.writer_->setBatchSize(p.writer_settings_.batch_);
-    p.writer_->setBlockingCalls(p.writer_settings_.blocking_);
+  pthread_mutex_lock(&state_mtx_);
+  if (state_ != FilterState::STOP_REQUEST) {
+    pthread_mutex_unlock(&state_mtx_);
     return 0;
   }
-  else {
-    std::cout << "connect sink queue -1" << std::endl;
-    return -1;
-  }
-}
+  pthread_mutex_unlock(&state_mtx_);
 
-int Filter::connectSourceQueue(int port, std::shared_ptr<Queue> q,
-                               Filter *src_filter)
-{
-  if (q == nullptr) return -1;
+  const int32_t stop_ret = _stop();
 
-  if (port < 0) {
-    std::cerr << "connectSourceQueue port < 0" << std::endl;
-    return -1;
-  }
-  unsigned int u_port = port;
-
-  SourcePort &p = source_ports_[u_port];
+  bool emit_state_changed = false;
+  FilterState old_state = FilterState::STOP_REQUEST;
+  FilterState new_state = FilterState::STOP_REQUEST;
 
   pthread_mutex_lock(&state_mtx_);
-
-  if ((state_ == FilterState::CONNECTED) && (u_port < source_ports_.size())) {
-    p.queue_ = q;
-    p.reader_ = new QueueReader(q);
-    QueueReader *r = p.reader_;
-    r->setBatchSize(p.reader_settings_.batch_);
-    r->setNewPerBatch(p.reader_settings_.new_per_batch_);
-    r->setBlockingCalls(p.reader_settings_.blocking_);
-
-    p.src_filter_ = src_filter;
-
-    pthread_mutex_unlock(&state_mtx_);
-    return 0;
+  old_state = state_;
+  if (state_ == FilterState::STOP_REQUEST) {
+    state_ = FilterState::SET;
+    new_state = state_;
+    emit_state_changed = true;
   }
-  else {
-    pthread_mutex_unlock(&state_mtx_);
-    return -1;
+  pthread_mutex_unlock(&state_mtx_);
+
+  if (emit_state_changed) {
+    notifyStateChanged(old_state, new_state, reason);
   }
+
+  return (stop_ret < 0) ? -1 : 0;
 }
 
-int32_t Filter::sourcePorts() const
-{
-  return static_cast<int32_t>(source_ports_.size());
-}
-
-int32_t Filter::sinkPorts() const
-{
-  return static_cast<int32_t>(sink_ports_.size());
-}
-
-QueueReader *Filter::reader(int i)
-{
-  if ((i >= 0) && (i < static_cast<int32_t>(source_ports_.size()))) {
-    return source_ports_[i].reader_;
-  }
-  else {
-    return nullptr;
-  }
-}
-
-QueueWriter *Filter::writer(int i)
-{
-  if ((i >= 0) && (i < static_cast<int32_t>(sink_ports_.size()))) {
-    return sink_ports_[i].writer_;
-  }
-  else {
-    return nullptr;
-  }
-}
-
-const FilterState &Filter::state()
-{
-  return state_;
-}
-
-const std::string &Filter::name()
-{
-  return name_;
-}
-
-int32_t Filter::addCommand(std::string name, std::function<int()> command,
-                           std::string tooltip, AccessType accessmode)
-{
-  return settings_.addCommand(name, command, tooltip, accessmode);
-}
-
-int32_t Filter::runCommand(std::string name)
-{
-  if (settings_.settingAccessMode(name) & state_)
-    return settings_.runCommand(name);
-  else {
-    std::cout << "Not allowed to set setting " << name
-              << " in \"state_=" << state2string(state_) << "\"." << std::endl;
-    return -1;
-  }
-}
-
-int Filter::setDeviceSettingValue(const char *key, const void *value)
+int32_t Filter::setDeviceSettingValue(const char *key, const void *value)
 {
   std::cout << "Filter::setDeviceSettingValue(" << key << "," << value << ")"
             << std::endl;
   return -1;
 }
 
-int Filter::setDeviceSettingValueStr(const char *key, const char *value)
+int32_t Filter::setDeviceSettingValueStr(const char *key, const char *value)
 {
   std::cout << "Filter::setDeviceSettingValueStr(" << key << "," << value << ")"
             << std::endl;
@@ -382,53 +865,47 @@ int32_t Filter::deviceSettingValue(const char *key, void *value)
   return -1;
 }
 
-const Settings2 *Filter::settings()
-{
-  return &settings_;
-}
-
-const Node2 *Filter::settingNode(std::string &name) const
+const Node *Filter::settingNode(std::string &name) const
 {
   return settings_[name];
 }
 
-int32_t Filter::readDeviceSettings(const YAML::Node &yaml_node)
+int32_t Filter::addCommand(std::string name, std::function<int()> command,
+                           epf::SettingType setting_type, std::string tooltip,
+                           AccessType accessmode)
 {
-  if (yaml_node["device_settings"])
-    deviceSettingsFromYAML(yaml_node["device_settings"]);
-  return 0;
+  int32_t ret =
+      settings_.addCommand(name, command, setting_type, tooltip, accessmode);
+  if (ret >= 0) {
+    notifySettingsChanged(SettingsChangeKind::CommandAdded,
+                          "command added: " + name);
+  }
+  return ret;
 }
 
-int32_t Filter::deviceSettingsFromYAML(const YAML::Node &yaml_node)
+int32_t Filter::runCommand(std::string name)
 {
-  for (YAML::const_iterator it = yaml_node.begin(); it != yaml_node.end();
-       ++it) {
-    std::string key = it->first.as<std::string>();
-    std::string value;
-
-    if (yaml_node[key].Type() == YAML::NodeType::Scalar) {
-      value = it->second.as<std::string>();
-
-      int err = setSettingValue<std::string>(key, value);
-      if (err >= 0) {
-        // std::cout << "setSettingValue: " << key << ", " << value << "
-        // [SUCCESS]"
-        //<< std::endl;
-        return 0;
-      }
-      else {
-        //   std::cout << "setSettingValue: " << key << "[FAILED]" << std::endl;
-        return err;
-      }
-    }
-    else if (yaml_node[key].Type() == YAML::NodeType::Map) {
-      deviceSettingsFromYAML(yaml_node[key]);
-    }
+  std::optional<AccessType> acces_mode = settings_.settingAccessMode(name);
+  if (acces_mode) {
+    if (access_allowed_in_state(acces_mode.value(), state_))
+      return settings_.runCommand(name);
     else {
-      std::cout << "YAML NodeType not supported." << std::endl;
+      std::cout << "Not allowed to set setting " << name
+                << " in \"state_=" << state2string(state_) << "\"."
+                << std::endl;
+      return -1;
     }
   }
-  return 0;
+  else {
+    std::cerr << "runCommand: Command \"" << name << "\" not found."
+              << std::endl;
+    return -1;
+  }
+}
+
+const Settings *Filter::settings() const
+{
+  return &settings_;
 }
 
 int32_t Filter::readSettings(const YAML::Node &filter_node)
@@ -437,163 +914,18 @@ int32_t Filter::readSettings(const YAML::Node &filter_node)
   if (filter_node["name"]) name_ = filter_node["name"].as<std::string>();
   if (filter_node["type"]) type_ = filter_node["type"].as<std::string>();
 
+  settings_.setName(name_);
+
   // Read device settings
   settings_.fromYAML(filter_node);
 
   if (filter_node["device_settings"]) {
-    if (this->state() != DISCONNECTED) {
+    if (state_ != DISCONNECTED) {
       deviceSettingsFromYAML(filter_node["device_settings"]);
     }
   }
-
-  if (filter_node["queue_settings"]) {
-    const YAML::Node &queue_settings_node = filter_node["queue_settings"];
-
-    // Read max sources and sinks
-    if (queue_settings_node["max sources"]) {
-      max_sources_ = queue_settings_node["max sources"].as<int>();
-    }
-    if (queue_settings_node["max sinks"]) {
-      max_sinks_ = queue_settings_node["max sinks"].as<int>();
-    }
-
-    sink_ports_.resize(max_sinks_);
-    source_ports_.resize(max_sources_);
-
-    // Read sink queue settings
-    if (queue_settings_node["sink queues"]) {
-      const YAML::Node &queues_node = queue_settings_node["sink queues"];
-      for (std::size_t i = 0; i < queues_node.size(); i++) {
-        const YAML::Node &queue_node = queues_node[i];
-        if (!queue_node["id"]) {
-          std::cerr
-              << "Warning: Missing 'id' in one of the sink queue settings."
-              << std::endl;
-          continue;
-        }
-        int id = queue_node["id"].as<int>();
-        if (id < max_sinks_ && id >= 0) {
-          readQueueSettings(queue_node, sink_ports_[id].queue_settings_);
-        }
-        else {
-          std::cerr << "Warning: Queue ID " << id
-                    << " out of bounds for sink queue settings." << std::endl;
-        }
-      }
-    }
-
-    // Read writer settings
-    if (queue_settings_node["writers"]) {
-      const YAML::Node &writers_node = queue_settings_node["writers"];
-      for (std::size_t i = 0; i < writers_node.size(); i++) {
-        const YAML::Node &writer_node = writers_node[i];
-        if (!writer_node["id"]) {
-          std::cerr << "Warning: Missing 'id' in one of the writer settings."
-                    << std::endl;
-          continue;
-        }
-        int id = writer_node["id"].as<int>();
-        if (id < max_sinks_ && id >= 0) {
-          readWriterSettings(writer_node, sink_ports_[id].writer_settings_);
-        }
-        else {
-          std::cerr << "Warning: Writer ID " << id
-                    << " is out of bounds for writer settings." << std::endl;
-        }
-      }
-    }
-
-    // Read reader settings
-    if (queue_settings_node["readers"]) {
-      const YAML::Node &readers_node = queue_settings_node["readers"];
-      for (std::size_t i = 0; i < readers_node.size(); i++) {
-        const YAML::Node &reader_node = readers_node[i];
-        if (!reader_node["id"]) {
-          std::cerr << "Warning: Missing 'id' in one of the reader settings."
-                    << std::endl;
-          continue;
-        }
-        int id = reader_node["id"].as<int>();
-        if (id < max_sources_ && id >= 0) {
-          readReaderSettings(reader_node, source_ports_[id].reader_settings_);
-        }
-        else {
-          std::cerr << "Warning: Reader ID " << id
-                    << " is out of bounds for reader settings." << std::endl;
-        }
-      }
-    }
-  }
-
+  notifySettingsChanged(SettingsChangeKind::Loaded, "settings read");
   return 0;
-}
-
-// function to read queue settings
-void Filter::readQueueSettings(const YAML::Node &queue_node,
-                               SinkQueueSettings &queue_settings)
-{
-  if (queue_node["length"]) {
-    queue_settings.length_ = queue_node["length"].as<int>();
-  }
-  if (queue_node["type"]) {
-    std::string type_str = queue_node["type"].as<std::string>();
-    queue_settings.type_ = (type_str == "lifo") ? lifo : fifo;
-  }
-  if (queue_node["max readers"]) {
-    queue_settings.max_readers_ = queue_node["max readers"].as<int>();
-  }
-}
-
-// function to read writer settings
-void Filter::readWriterSettings(const YAML::Node &writer_node,
-                                QueueHandlerSettings &writer_settings)
-{
-  if (writer_node["batch"]) {
-    writer_settings.batch_ = writer_node["batch"].as<int>();
-  }
-  else {
-    std::cerr << "Warning: 'batch' is missing. Using default value."
-              << std::endl;
-    writer_settings.batch_ = 1;
-  }
-  if (writer_node["blocking"]) {
-    writer_settings.blocking_ = writer_node["blocking"].as<bool>();
-  }
-  else {
-    std::cerr << "Warning: 'blocking' is missing. Using default value."
-              << std::endl;
-    writer_settings.blocking_ = false;
-  }
-}
-
-// function to read reader settings
-void Filter::readReaderSettings(const YAML::Node &reader_node,
-                                QueueHandlerSettings &reader_settings)
-{
-  if (reader_node["batch"]) {
-    reader_settings.batch_ = reader_node["batch"].as<int>();
-  }
-  else {
-    std::cerr << "Warning: 'batch' is missing. Using default value."
-              << std::endl;
-    reader_settings.batch_ = 1;
-  }
-  if (reader_node["new per batch"]) {
-    reader_settings.new_per_batch_ = reader_node["new per batch"].as<int>();
-  }
-  else {
-    std::cerr << "Warning: 'new per batch' is missing. Using default value."
-              << std::endl;
-    reader_settings.new_per_batch_ = reader_settings.batch_;
-  }
-  if (reader_node["blocking"]) {
-    reader_settings.blocking_ = reader_node["blocking"].as<bool>();
-  }
-  else {
-    std::cerr << "Warning: 'blocking' is missing. Using default value."
-              << std::endl;
-    reader_settings.blocking_ = false;
-  }
 }
 
 int32_t Filter::writeSettings(YAML::Node &filter_node)
@@ -602,94 +934,7 @@ int32_t Filter::writeSettings(YAML::Node &filter_node)
   filter_node["name"] = name_;
   filter_node["type"] = type_;
 
-  // // // ToDo ¿ refresh device settings ?
-  // auto device_settings = settings_.listNames(1);  // get list of device
-  // settings for (auto &s : device_settings) {
-  //   char placeholder[256];  // update tree
-  //   deviceSettingValue(s.c_str(), placeholder);
-  // }
-
-  // Write filter settings to the YAML node
   settings_.toYAML(filter_node);
-
-  // Queue settings node
-  YAML::Node queue_settings_node;
-  queue_settings_node["max_sources"] = max_sources_;
-  queue_settings_node["max_sinks"] = max_sinks_;
-
-  // Sink queues and writers
-  YAML::Node queues_node;
-  YAML::Node writers_node;
-
-  for (size_t i = 0; i < sink_ports_.size(); ++i) {
-    if (sink_ports_[i].queue_) {
-      SinkPort &p = sink_ports_[i];
-
-      // Queue settings
-      YAML::Node queue_node;
-      queue_node["id"] = static_cast<int>(i);  // ID as integer
-      queue_node["length"] = p.queue_settings_.length_;
-      queue_node["type"] = p.queue_settings_.type_ == lifo ? "lifo" : "fifo";
-      queue_node["max_readers"] = p.queue_settings_.max_readers_;
-      queues_node.push_back(queue_node);
-
-      // Writer settings
-      YAML::Node writer_node;
-      writer_node["id"] = static_cast<int>(i);  // ID as integer
-      writer_node["batch"] = p.writer_settings_.batch_;
-      writer_node["blocking"] = p.writer_settings_.blocking_;
-      writers_node.push_back(writer_node);
-    }
-  }
-
-  if (!queues_node.IsNull()) {
-    queue_settings_node["sink_queues"] = queues_node;
-  }
-  if (!writers_node.IsNull()) {
-    queue_settings_node["writers"] = writers_node;
-  }
-
-  // Source queues and readers
-  YAML::Node readers_node;
-
-  for (size_t i = 0; i < source_ports_.size(); ++i) {
-    if (source_ports_[i].queue_) {
-      SourcePort &p = source_ports_[i];
-
-      // Reader settings
-      YAML::Node reader_node;
-      reader_node["id"] = static_cast<int>(i);  // ID as integer
-      reader_node["batch"] = p.reader_settings_.batch_;
-      reader_node["new_per_batch"] = p.reader_settings_.new_per_batch_;
-      reader_node["blocking"] = p.reader_settings_.blocking_;
-      readers_node.push_back(reader_node);
-    }
-  }
-
-  if (!readers_node.IsNull()) {
-    queue_settings_node["readers"] = readers_node;
-  }
-
-  filter_node["queue_settings"] = queue_settings_node;
-
-  return 0;
-}
-
-int32_t Filter::saveSettings(const std::string &filename)
-{
-  // Create a YAML node and write the current settings into it
-  YAML::Node filter_node;
-  writeSettings(filter_node);
-
-  try {
-    // Save the YAML node to a file
-    std::ofstream fout(filename);
-    fout << filter_node;
-  }
-  catch (const std::exception &e) {
-    std::cerr << "Error saving settings to file: " << e.what() << std::endl;
-    return -1;
-  }
 
   return 0;
 }
@@ -711,25 +956,202 @@ int32_t Filter::loadSettings(const std::string &filename)
   return readSettings(filter_node);
 }
 
-namespace ep {
-
-std::string state2string(const ep::FilterState &state)
+int32_t Filter::saveSettings(const std::string &filename)
 {
-  switch (state) {
-    case FilterState::CONNECTED:
-      return "connected";
-      break;
-    case FilterState::DISCONNECTED:
-      return "disconnected";
-      break;
-    case FilterState::SET:
-      return "set";
-      break;
-    case FilterState::RUNNING:
-      return "running";
-      break;
+  // Create a YAML node and write the current settings into it
+  YAML::Node filter_node;
+  writeSettings(filter_node);
+
+  try {
+    if (filename.empty()) {
+      std::cout << filter_node << std::endl;
+    }
+    else {
+      // Save the YAML node to a file
+      std::ofstream fout(filename);
+      fout << filter_node;
+    }
   }
-  return "";
+  catch (const std::exception &e) {
+    std::cerr << "Error saving settings to file: " << e.what() << std::endl;
+    return -1;
+  }
+
+  return 0;
 }
 
-}  // namespace ep
+int32_t Filter::connect(int src_port_index, SinkPort *sink_port)
+{
+  if (!sink_port->isActivated()) {
+    std::cerr << "Filter::connectSourcePort: target SinkPort is not activated"
+              << std::endl;
+    return -1;
+  }
+
+  if (src_port_index < 0) {
+    std::cerr << "Filter::connectSourcePort port < 0" << std::endl;
+    return -1;
+  }
+
+  SourcePort *src_port = sourcePort(src_port_index);
+
+  pthread_mutex_lock(&state_mtx_);
+
+  if ((state_ == FilterState::CONNECTED) && src_port) {
+    int32_t ret = src_port->connect(sink_port->queue());
+    pthread_mutex_unlock(&state_mtx_);
+    return ret;
+  }
+
+  pthread_mutex_unlock(&state_mtx_);
+  return -1;
+}
+
+std::vector<int> Filter::connectedSources()
+{
+  std::vector<int> connected_sources;
+  // Iterate over all possible source queues
+  for (size_t i = 0; i < source_ports_.size(); ++i) {
+    // Check if the source queue is connected
+    //    if (source_ports_[i].isConnected()) {
+    if (source_ports_[i].isConnected()) {
+      //    if (source_ports_[i].queue() != nullptr) {
+      connected_sources.push_back(static_cast<int32_t>(i));
+    }
+  }
+  return connected_sources;
+}
+
+std::vector<int> Filter::activatedSinks()
+{
+  std::vector<int> connected_sinks;
+  // Iterate over all possible sink queues
+  for (size_t i = 0; i < sink_ports_.size(); ++i) {
+    // Check if the sink queue is connected
+    if (sink_ports_[i].isActivated()) {
+      connected_sinks.push_back(static_cast<int32_t>(i));
+    }
+  }
+  return connected_sinks;
+}
+
+int32_t Filter::connectSourceFilter(Filter *src_filter)
+{
+  if (src_filter == nullptr) return -1;
+
+  for (auto it : src_filters_) {
+    if (it == src_filter) return -1;
+  }
+  src_filters_.push_back(src_filter);
+  return 0;
+}
+
+SourcePort *Filter::sourcePort(int32_t port_index) noexcept
+{
+  if (port_index >= 0 &&
+      static_cast<size_t>(port_index) < source_ports_.size()) {
+    return &source_ports_[port_index];
+  }
+  return nullptr;
+}
+
+SinkPort *Filter::sinkPort(int32_t port_index) noexcept
+{
+  if (port_index >= 0 && static_cast<size_t>(port_index) < sink_ports_.size()) {
+    return &sink_ports_[port_index];
+  }
+  return nullptr;
+}
+
+int32_t Filter::readDeviceSettings(const YAML::Node &yaml_node)
+{
+  if (yaml_node["device_settings"])
+    deviceSettingsFromYAML(yaml_node["device_settings"]);
+  return 0;
+}
+
+int32_t Filter::createSourcePortSettings()
+{
+  for (size_t i = 0; i < source_ports_.size(); i++) {
+    std::unique_ptr<ObjectNode> node =
+        std::make_unique<ObjectNode>(std::to_string(i));
+    int32_t index =
+        settings_.addSettingNode(std::move(node), SOURCE_PORT_SETTING);
+
+    AccessType access = epf::W_D | epf::W_C;
+
+    settings_.addSettingUnder(
+        "message_window", source_ports_[i].messageWindow(), index,
+        "Number of messages read by the reader in each iteration.", access);
+    settings_.addSettingUnder(
+        "message_stride", source_ports_[i].messageStride(), index,
+        "Number of messages that the reader advances in each call.", access);
+    settings_.addSettingUnder("blocking", source_ports_[i].blocking(), index,
+                              "The reading calls are blocking or not", access);
+  }
+
+  notifySettingsChanged(SettingsChangeKind::StructureChanged,
+                        "source port settings created");
+  return 0;
+}
+
+int32_t Filter::createSinkPortSettings()
+{
+  for (size_t i = 0; i < sink_ports_.size(); i++) {
+    std::unique_ptr<ObjectNode> node =
+        std::make_unique<ObjectNode>(std::to_string(i));
+    int32_t index =
+        settings_.addSettingNode(std::move(node), SINK_PORT_SETTING);
+
+    AccessType access = epf::W_D | epf::W_C;
+
+    settings_.addSettingUnder("length", sink_ports_[i].length(), index,
+                              "Queue lenght.", access);
+    settings_.addSettingUnder("max_readers", sink_ports_[i].maxReaders(), index,
+                              "Maximum readers of the port queue.", access);
+    settings_.addSettingUnder("max_writers", sink_ports_[i].maxWriters(), index,
+                              "Maximum readers of the port queue.", access);
+    settings_.addSettingUnder("queue_type", sink_ports_[i].queueType(), index,
+                              "Type of queue (lifo/fifo)", access);
+    settings_.addEnumOptions(
+        "sink_ports." + std::to_string(i) + ".queue_type",
+        {{static_cast<int32_t>(epf::QueueType::fifo), "fifo", "FIFO"},
+         {static_cast<int32_t>(epf::QueueType::lifo), "lifo", "LIFO"}});
+    settings_.addSettingUnder("batch_size", sink_ports_[i].batchSize(), index,
+                              "Size of the batch that writer write.", access);
+    settings_.addSettingUnder("blocking", sink_ports_[i].blocking(), index,
+                              "The writing calls are blocking or not", access);
+    settings_.addSettingUnder("timestamp", sink_ports_[i].timestamp(), index,
+                              "Enable automatic timestamp", access);
+  }
+
+  notifySettingsChanged(SettingsChangeKind::StructureChanged,
+                        "sink port settings created");
+  return 0;
+}
+
+int32_t Filter::deviceSettingsFromYAML(const YAML::Node &yaml_node)
+{
+  for (YAML::const_iterator it = yaml_node.begin(); it != yaml_node.end();
+       ++it) {
+    std::string key = it->first.as<std::string>();
+    std::string value;
+
+    if (yaml_node[key].Type() == YAML::NodeType::Scalar) {
+      value = it->second.as<std::string>();
+
+      int err = setSettingValue<std::string>(key, value);
+      if (err < 0) {
+        std::cout << "setSettingValue: " << key << "[FAILED]" << std::endl;
+        //        return err;
+      }
+    }
+    else if (yaml_node[key].Type() == YAML::NodeType::Map) {
+      deviceSettingsFromYAML(yaml_node[key]);
+    }
+    else {
+      std::cout << "YAML NodeType not supported." << std::endl;
+    }
+  }
+  return 0;
+}

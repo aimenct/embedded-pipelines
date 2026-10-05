@@ -1,5 +1,5 @@
 Embedded Pipelines Library Documentation
-####################################
+########################################
 
 .. toctree::
     ../index

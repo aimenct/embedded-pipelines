@@ -1,0 +1,4 @@
+#pragma once
+namespace test_paths {
+inline constexpr const char *EPF_TEST_DATA_DIR = "@EPF_TEST_DATA_DIR@";
+}

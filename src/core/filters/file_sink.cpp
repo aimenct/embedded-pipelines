@@ -4,11 +4,15 @@
 
 #include "file_sink.h"
 
-using namespace ep;
+#include <cerrno>
+#include <cstring>
+#include <system_error>
+
+using namespace epf;
 using namespace std;
 
 // Helper function to get the current timestamp as a string
-std::string getCurrentTimestamp()
+std::string get_current_timestamp()
 {
   auto now = std::chrono::system_clock::now();
   auto in_time_t = std::chrono::system_clock::to_time_t(now);
@@ -18,93 +22,41 @@ std::string getCurrentTimestamp()
   return ss.str();
 }
 
-FileSink::FileSink(const YAML::Node& config)
-    : Filter()
+FileSink::FileSink(const YAML::Node &config)
+    : Filter(config, 10, 0)
 {
-  std::cout << "FileSink constructor " << std::endl;
+  std::cout << "[FileSink] constructor" << std::endl;
   yaml_config_ = config;
 
-  name_ = "my_name";
-  max_sources_ = 10;
-  max_sinks_ = 0;
   folder_path_ = "./";
   timeout_ = 0;
   max_file_size_ = 500000000;  // maximum file size in bytes
 
-  if (config["name"]) name_ = config["name"].as<std::string>();
-
-  // if (config["filter_settings"]) {
-  //   printf("FILTER SETTINGS\n");
-  //   getchar();
-  // }
-
-  // if (config["filter_commands"]) {
-  //   printf("FILTER COMMANDS\n");
-  //   getchar();
-  // }
-
-  // if (config["device_settings"]) {
-  //   printf("DEVICE SETTINGS\n");
-  //   getchar();
-  // }
-
-  // if (config["queue_settings"]) {
-  //   printf("QUEUE SETTINGS\n");
-  //   getchar();
-  // }
+  // You can also add some filter specific commands
+  // addCommand("start", std::bind(&FileSink::start, this));
+  // addCommand("stop", std::bind(&FileSink::stop, this));
 
   addSetting("path", folder_path_);
-  // addSetting("max sources", max_src_queues_, false, "queues", W); // todo -
-  // change status addSetting("max sinks", max_sink_queues_, false, "queues",
-  // W);  // todo - change status
   addSetting("timeout", timeout_);
   addSetting("max file size", max_file_size_);
 
   YAML::Node yaml_settings = config;
   settings_.fromYAML(yaml_settings);
-
-  // // yujuu
-  // // todo - move to another place
-  // if (yaml_settings["queue_settings"]) {
-  //   if (yaml_settings["queue_settings"]["max sources"])
-  //     max_src_queues_ =
-  //         yaml_settings["queue_settings"]["max sources"].as<int>();
-  //   if (yaml_settings["queue_settings"]["max sinks"])
-  //     max_sink_queues_ = yaml_settings["queue_settings"]["max
-  //     sinks"].as<int>();
-
-  //   sink_lengths_.clear();
-  //   if (yaml_settings["queue_settings"]["sink length"])
-  //     sink_lengths_ =
-  //         yaml_settings["queue_settings"]["sink
-  //         length"].as<std::vector<int>>();
-  //   else
-  //     // Initialize with default values
-  //     sink_lengths_ = std::vector<int>(max_sink_queues_, 10);
-
-  //   std::cout << "max sources: " << max_src_queues_ << std::endl;
-  //   std::cout << "max sinks: " << max_sink_queues_ << std::endl;
-  //   std::cout << "sink lengths: ";
-  //   for (const int& length : sink_lengths_) {
-  //     std::cout << length << " ";
-  //   }
-  //   std::cout << std::endl;
-  // }
-  // else {
-  //   std::cout << "'sink length' not found." << std::endl;
-  //   sink_lengths_ = std::vector<int>(max_sink_queues_, 10);
-  //}
-
   //  settings_.print();
 }
 
 FileSink::~FileSink()
 {
-  cout << "FileSink destructor" << endl;
+  closeFiles();
+  cout << "[FileSink] destructor" << endl;
 }
 
-int FileSink::openFile(FileData& file_data)
+int FileSink::openFile(FileData &file_data)
 {
+  if (ensureOutputDirectory() != 0) {
+    return -1;
+  }
+
   // Construct the new filename with timestamp and .bin suffix for data files
   std::string data_filename = folder_path_ + "/" + timestamp_ + "_" +
                               std::to_string(file_data.msg_count) + "_" +
@@ -112,9 +64,8 @@ int FileSink::openFile(FileData& file_data)
 
   file_data.data_file = std::fopen(data_filename.c_str(), "wb");
   if (!file_data.data_file) {
-    std::cerr << "Error opening file: " << file_data.filename << std::endl;
-    // Ensure we close any previously opened files in case of an error
-    std::fclose(file_data.data_file);
+    std::cerr << "[FileSink] Error opening data file: '" << data_filename
+              << "'." << std::endl;
     return -1;
   }
 
@@ -128,11 +79,12 @@ int FileSink::openFile(FileData& file_data)
                                std::to_string(file_data.msg_count) + "_" +
                                file_data.filename + "_hdr.bin";
 
-    file_data.hdr_file = std::fopen(hdr_filename.c_str(), "w");
+    file_data.hdr_file = std::fopen(hdr_filename.c_str(), "wb");
     if (!file_data.hdr_file) {
-      std::cerr << "Error opening file: " << hdr_filename << std::endl;
-      // Ensure we close any previously opened files in case of an error
-      std::fclose(file_data.hdr_file);
+      std::cerr << "[FileSink] Error opening header file: '" << hdr_filename
+                << "'." << std::endl;
+      std::fclose(file_data.data_file);
+      file_data.data_file = nullptr;
       return -1;
     }
   }
@@ -144,8 +96,26 @@ int FileSink::openFile(FileData& file_data)
   return 0;
 }
 
-int FileSink::closeFile(FileData& f)
+int FileSink::closeFile(FileData &f)
 {
+  std::string data_filename;
+  std::string hdr_filename;
+  std::string data_schema_filename;
+  std::string hdr_schema_filename;
+  if (f.file_size == 0) {
+    data_filename = folder_path_ + "/" + timestamp_ + "_" +
+                    std::to_string(f.msg_count) + "_" + f.filename + "_dat.bin";
+    data_schema_filename =
+        folder_path_ + "/" + timestamp_ + "_" + f.filename + "_dat.yml";
+    if (f.hdr_file) {
+      hdr_filename = folder_path_ + "/" + timestamp_ + "_" +
+                     std::to_string(f.msg_count) + "_" + f.filename +
+                     "_hdr.bin";
+      hdr_schema_filename =
+          folder_path_ + "/" + timestamp_ + "_" + f.filename + "_hdr.yml";
+    }
+  }
+
   if (f.data_file) {
     std::fclose(f.data_file);
     f.data_file = nullptr;
@@ -155,6 +125,16 @@ int FileSink::closeFile(FileData& f)
     f.hdr_file = nullptr;
   }
 
+  if (!data_filename.empty()) {
+    std::error_code ec;
+    std::filesystem::remove(data_filename, ec);
+    if (!hdr_filename.empty()) std::filesystem::remove(hdr_filename, ec);
+    if (!data_schema_filename.empty())
+      std::filesystem::remove(data_schema_filename, ec);
+    if (!hdr_schema_filename.empty())
+      std::filesystem::remove(hdr_schema_filename, ec);
+  }
+
   f.file_size = 0;
 
   return 0;
@@ -162,31 +142,37 @@ int FileSink::closeFile(FileData& f)
 
 int FileSink::openFiles()
 {
+  if (ensureOutputDirectory() != 0) {
+    return -1;
+  }
+
   // Get the current timestamp
-  timestamp_ = getCurrentTimestamp();
-  for (auto& file_data : files_) {
+  timestamp_ = get_current_timestamp();
+  for (auto &file_data : files_) {
     // Construct the new filename with timestamp and .bin suffix for data files
     std::string data_filename = folder_path_ + "/" + timestamp_ + "_0_" +
                                 file_data.filename + "_dat.bin";
 
     file_data.data_file = std::fopen(data_filename.c_str(), "wb");
     if (!file_data.data_file) {
-      std::cerr << "Error opening file: " << data_filename << std::endl;
+      std::cerr << "[FileSink] Error opening data file: '" << data_filename
+                << "'." << std::endl;
       // Ensure we close any previously opened files in case of an error
       closeFiles();
       return -1;
     }
     data_filename =
         folder_path_ + "/" + timestamp_ + "_" + file_data.filename + "_dat.yml";
-    message_to_yaml(*(file_data.reader->dataSchema()), data_filename);
+    serialize_message(*(file_data.reader->dataSchema()), data_filename);
 
     // Construct the new filename with timestamp and .yml suffix for hdr files
     if (file_data.reader->hdrSchema() != nullptr) {
       std::string hdr_filename = folder_path_ + "/" + timestamp_ + "_0_" +
                                  file_data.filename + "_hdr.bin";
-      file_data.hdr_file = std::fopen(hdr_filename.c_str(), "w");
+      file_data.hdr_file = std::fopen(hdr_filename.c_str(), "wb");
       if (!file_data.hdr_file) {
-        std::cerr << "Error opening file: " << hdr_filename << std::endl;
+        std::cerr << "[FileSink] Error opening header file: '" << hdr_filename
+                  << "'." << std::endl;
         // Ensure we close any previously opened files in case of an error
         closeFiles();
         return -1;
@@ -194,7 +180,7 @@ int FileSink::openFiles()
 
       hdr_filename = folder_path_ + "/" + timestamp_ + "_" +
                      file_data.filename + "_hdr.yml";
-      message_to_yaml(*(file_data.reader->hdrSchema()), hdr_filename);
+      serialize_message(*(file_data.reader->hdrSchema()), hdr_filename);
     }
   }
   return 0;
@@ -202,31 +188,77 @@ int FileSink::openFiles()
 
 int FileSink::closeFiles()
 {
-  for (auto& file_data : files_) {
-    if (file_data.data_file) {
-      std::fclose(file_data.data_file);
-      file_data.data_file = nullptr;
-    }
-    if (file_data.hdr_file) {
-      std::fclose(file_data.hdr_file);
-      file_data.hdr_file = nullptr;
-    }
+  for (auto &file_data : files_) {
+    closeFile(file_data);
   }
+  return 0;
+}
+
+int FileSink::ensureOutputDirectory() const
+{
+  if (folder_path_.empty()) {
+    std::cerr << "Error: recording path is empty." << std::endl;
+    return -1;
+  }
+
+  std::error_code ec;
+  std::filesystem::path output_dir(folder_path_);
+  if (std::filesystem::exists(output_dir, ec)) {
+    if (ec) {
+      std::cerr << "Error checking output directory '" << folder_path_
+                << "': " << ec.message() << std::endl;
+      return -1;
+    }
+    if (!std::filesystem::is_directory(output_dir, ec)) {
+      std::cerr << "Error: output path is not a directory: " << folder_path_
+                << std::endl;
+      return -1;
+    }
+    return 0;
+  }
+
+  if (ec) {
+    std::cerr << "Error checking output directory '" << folder_path_
+              << "': " << ec.message() << std::endl;
+    return -1;
+  }
+
+  if (!std::filesystem::create_directories(output_dir, ec)) {
+    // The directory may have been created by another thread/process between
+    // exists() and create_directories(); accept that case.
+    if (!ec && std::filesystem::exists(output_dir) &&
+        std::filesystem::is_directory(output_dir)) {
+      return 0;
+    }
+    if (ec) {
+      std::cerr << "Error creating output directory '" << folder_path_
+                << "': " << ec.message() << std::endl;
+    }
+    else {
+      std::cerr << "Error creating output directory '" << folder_path_ << "'."
+                << std::endl;
+    }
+    return -1;
+  }
+
   return 0;
 }
 
 int FileSink::_set()
 {
-  std::cout << "FileSink Set" << std::endl;
+  std::cout << "[FileSink] set" << std::endl;
+  closeFiles();
+  files_.clear();
 
   std::string fname = "q";
 
   // check active queues / readers
+  //  auto sources = connectedSources();
   auto sources = connectedSources();
-  for (auto& i : sources) {
+  for (auto &i : sources) {
     fname += std::to_string(i);
     // Add a FileData struct for each filename
-    files_.emplace_back(fname, reader(i));
+    files_.emplace_back(fname, sourcePort(i)->reader());
   }
   return 0;
 }
@@ -236,33 +268,73 @@ int32_t FileSink::_job()
   bool any = false;
   int last_err = 0;
 
-  for (auto& file : files_) {
-    QueueReader* reader = file.reader;
-    int err = reader->startRead(reader->batchSize(), reader->newPerBatch());
+  for (auto &file : files_) {
+    QueueReader *reader = file.reader;
+    int err =
+        reader->startRead(reader->messageWindow(), reader->messageStride());
 
     if (err >= 0) {
-      any = true;
-
       auto data_size = reader->dataSchema()->size();
-      fwrite(reader->dataPtrA(), 1, reader->lenA() * data_size, file.data_file);
-      fwrite(reader->dataPtrB(), 1, reader->lenB() * data_size, file.data_file);
+      if (!file.data_file) {
+        std::cerr << "[FileSink] ERROR! Data file handle is null for '"
+                  << file.filename << "'." << std::endl;
+        reader->endRead();
+        last_err = -1;
+        continue;
+      }
+
+      const size_t expected_data_a = reader->lenA() * data_size;
+      const size_t expected_data_b = reader->lenB() * data_size;
+      size_t written_data_a =
+          fwrite(reader->dataPtrA(), 1, expected_data_a, file.data_file);
+      size_t written_data_b =
+          fwrite(reader->dataPtrB(), 1, expected_data_b, file.data_file);
+      if (written_data_a != expected_data_a ||
+          written_data_b != expected_data_b) {
+        std::cerr << "[FileSink] ERROR! Failed writing data for '"
+                  << file.filename << "'. A: " << written_data_a << "/"
+                  << expected_data_a << ", B: " << written_data_b << "/"
+                  << expected_data_b << ", errno=" << errno << " ("
+                  << std::strerror(errno) << ")" << std::endl;
+        reader->endRead();
+        return -1;
+      }
+      any = true;
 
       // Write header data if hdr_file is not nullptr
       if (file.hdr_file) {
         auto header_size = reader->hdrSchema()->size();
-        fwrite(reader->hdrPtrA(), 1, reader->lenA() * header_size,
-               file.hdr_file);
-        fwrite(reader->hdrPtrB(), 1, reader->lenB() * header_size,
-               file.hdr_file);
+        const size_t expected_hdr_a = reader->lenA() * header_size;
+        const size_t expected_hdr_b = reader->lenB() * header_size;
+        size_t written_hdr_a =
+            fwrite(reader->hdrPtrA(), 1, expected_hdr_a, file.hdr_file);
+        size_t written_hdr_b =
+            fwrite(reader->hdrPtrB(), 1, expected_hdr_b, file.hdr_file);
+        if (written_hdr_a != expected_hdr_a ||
+            written_hdr_b != expected_hdr_b) {
+          std::cerr << "[FileSink] ERROR! Failed writing header for '"
+                    << file.filename << "'. A: " << written_hdr_a << "/"
+                    << expected_hdr_a << ", B: " << written_hdr_b << "/"
+                    << expected_hdr_b << ", errno=" << errno << " ("
+                    << std::strerror(errno) << ")" << std::endl;
+          reader->endRead();
+          return -1;
+        }
       }
 
-      file.msg_count += reader->batchSize();
+      file.msg_count += reader->messageWindow();
       file.file_size += data_size;
 
       if (file.file_size > max_file_size_) {
-        std::cout << "file size " << file.file_size << std::endl;
+        std::cout << "[FileSink] rotating file at size " << file.file_size
+                  << std::endl;
         closeFile(file);
-        openFile(file);
+        if (openFile(file) != 0) {
+          std::cerr << "[FileSink] Error reopening rotated file for '"
+                    << file.filename << "'." << std::endl;
+          reader->endRead();
+          return -1;
+        }
       }
 
       reader->endRead();
@@ -276,75 +348,39 @@ int32_t FileSink::_job()
   return any ? 0 : last_err;
 }
 
-// int FileSink::job()
-// {
-//   bool any = false;
-
-//   int err = 0;
-//   for (auto& f : files_) {
-//     QueueReader* r = f.reader;
-//     err = r->startRead(r->batchSize(), r->newPerBatch());
-
-//     if (err >= 0) {
-//       any = true;
-
-//       fwrite(r->dataPtrA(), 1, r->lenA() * r->msg()->size(), f.data_file);
-//       fwrite(r->dataPtrB(), 1, r->lenB() * r->msg()->size(), f.data_file);
-
-//       // Access the pointers (hdrA, hdrB) in the circular buffer
-//       // pointing to start of the header messages block
-//       if (f.hdr_file != nullptr) {
-//         fwrite(r->hdrPtrA(), 1, r->lenA() * r->hdr()->size(), f.hdr_file);
-//         fwrite(r->hdrPtrB(), 1, r->lenB() * r->hdr()->size(), f.hdr_file);
-//       }
-
-//       f.msg_count += r->batchSize();
-//       f.file_size += r->msg()->size();
-
-//       if (f.file_size > max_file_size_) {
-//         std::cout << "file size " << f.file_size << std::endl;
-//         closeFile(f);
-//         openFile(f);
-//       }
-
-//       r->endRead();
-//     }
-//     // else
-//     // 	printf("filesink do job err\n");
-//   }
-//   if (any) return 0;
-//   usleep(timeout_);
-//   return err;
-// }
-
 int FileSink::_open()
 {
-  std::cout << "FileSink open" << std::endl;
+  std::cout << "[FileSink] open" << std::endl;
   return 0;
 }
 int FileSink::_close()
 {
-  std::cout << "FileSink close" << std::endl;
+  std::cout << "[FileSink] close" << std::endl;
+  closeFiles();
   return 0;
 }
 
 int FileSink::_start()
 {
-  std::cout << "FileSink start" << std::endl;
-  openFiles();
-  return 0;
+  std::cout << "[FileSink] start" << std::endl;
+  for (auto &file_data : files_) {
+    file_data.msg_count = 0;
+    file_data.file_size = 0;
+  }
+  return openFiles();
 }
 
 int FileSink::_stop()
 {
-  std::cout << "FileSink stop" << std::endl;
+  std::cout << "[FileSink] stop" << std::endl;
   closeFiles();
   return 0;
 }
 
 int FileSink::_reset()
 {
-  std::cout << "FileSink reset" << std::endl;
+  std::cout << "[FileSink] reset" << std::endl;
+  closeFiles();
   files_.clear();
   return 0;
 }

@@ -1,0 +1,19 @@
+# OPCUAserver full pipeline configuration template.
+# Copy/paste this block into your config.yml.
+
+filters:
+  - name: OPCUAserver
+    type: OPCUAserver
+    settings:
+      base:
+        # ---- OPCUAserver built-in filter settings ----
+        enable images: true       # Export image-like data where supported
+        server_port: 4840         # TCP port exposed by OPC-UA server
+        server_url: ""            # Optional host/IP override
+
+      source_ports:
+        # OPCUAserver is Filter(config, 10, 0): reads upstream queues.
+        "0":
+          message_window: 1
+          message_stride: 1
+          blocking: true

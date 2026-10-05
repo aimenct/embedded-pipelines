@@ -15,40 +15,37 @@
 #include <memory>
 #include <vector>
 
-#include "ep_types.h"
+#include "epf_types.h"
 #include "image_object.h"
 #include "message.h"
 #include "node.h"
 #include "node_tree.h"
 #include "settings.h"
 
-namespace ep {
+namespace epf {
 
-int message_to_yaml(const Message &msg, const std::string &filename = "");
-void message_node_to_yaml(const Node2 &my_node, YAML::Emitter &out,
-                          bool flow = false);
+// Message serialization
+int serialize_message(const Message &msg, const std::string &filename = "");
+std::unique_ptr<Message> deserialize_message(const YAML::Node &node);
 
-Message *message_from_yaml(const YAML::Node &node);
-Node2 *message_node_from_yaml(const YAML::Node &node);
+// Node serialization
+void serialize_node(const Node &node, YAML::Emitter &out_yaml);
+std::unique_ptr<Node> deserialize_node(const YAML::Node &node);
+std::string data_node_value_to_string(const DataNode &node);
 
-std::string dataNodeValueToString(const DataNode &node);
-
-void nodeTree2Yaml(const NodeTree &my_tree);
-
-int parse_nodetree_from_yaml(const YAML::Node &node, const NodeTree &tree);
-
-std::vector<int> parseDimensions(const YAML::Node node);
+// Array serialization helpers
+std::vector<size_t> parse_dimensions(const YAML::Node &dimensions_node);
 
 template <typename T>
-void streamValues(std::ostringstream &oss, T *data,
-                  const std::vector<size_t> &dims, size_t dimIndex = 0,
-                  size_t offset = 0)
+void stream_values(std::ostringstream &oss, T *data,
+                   const std::vector<size_t> &dims, size_t dim_index = 0,
+                   size_t offset = 0)
 {
-  if (dimIndex == dims.size() - 1) {
+  if (dim_index == dims.size() - 1) {
     oss << "[";
-    for (int i = 0; i < static_cast<int>(dims[dimIndex]); ++i) {
+    for (int i = 0; i < static_cast<int>(dims[dim_index]); ++i) {
       oss << data[offset + i];
-      if (i < static_cast<int>(dims[dimIndex]) - 1) {
+      if (i < static_cast<int>(dims[dim_index]) - 1) {
         oss << ", ";
       }
     }
@@ -56,37 +53,37 @@ void streamValues(std::ostringstream &oss, T *data,
   }
   else {
     oss << "[";
-    for (int i = 0; i < static_cast<int>(dims[dimIndex]); ++i) {
+    for (int i = 0; i < static_cast<int>(dims[dim_index]); ++i) {
       if (i > 0) {
         oss << ", ";
       }
-      streamValues(oss, data, dims, dimIndex + 1,
-                   offset + i * dims[dimIndex + 1]);
+      stream_values(oss, data, dims, dim_index + 1,
+                    offset + i * dims[dim_index + 1]);
     }
     oss << "]";
   }
 }
 
-// Helper function to trim whitespace from both ends of a string
+// Array deserialization helpers
+
 std::string trim(const std::string &str);
 
-// Recursive function to parse a string into a nested vector of arbitrary type
 template <typename T>
-void parseArray(std::stringstream &ss, std::vector<std::vector<T>> &result)
+void parse_array(std::stringstream &ss, std::vector<std::vector<T>> &result)
 {
   char c;
   while (ss >> c) {
     if (c == '[') {
-      std::vector<T> innerArray;
+      std::vector<T> inner_array;
       T value;
       while (ss >> value) {
-        innerArray.push_back(value);
+        inner_array.push_back(value);
         if (ss.peek() == ',')
           ss.ignore();
         else if (ss.peek() == ']')
           break;
       }
-      result.push_back(innerArray);
+      result.push_back(inner_array);
       if (ss.peek() == ']') ss.ignore();
     }
     if (ss.peek() == ',')
@@ -96,9 +93,8 @@ void parseArray(std::stringstream &ss, std::vector<std::vector<T>> &result)
   }
 }
 
-// Templated function to parse nested arrays from a YAML value field
 template <typename T>
-std::vector<std::vector<T>> parseNestedArray(const std::string &str)
+std::vector<std::vector<T>> parse_nested_array(const std::string &str)
 {
   std::vector<std::vector<T>> result;
   std::stringstream ss(trim(str));
@@ -108,7 +104,7 @@ std::vector<std::vector<T>> parseNestedArray(const std::string &str)
 
   while (ss >> c && c != ']') {
     if (c == '[') {
-      std::vector<T> innerArray;
+      std::vector<T> inner_array;
       std::string value;
       std::getline(ss, value, ']');  // Read until the closing bracket
 
@@ -120,37 +116,37 @@ std::vector<std::vector<T>> parseNestedArray(const std::string &str)
                   ? ""
                   : value.substr(start, end - start + 1);
 
-      std::stringstream innerStream(value);
+      std::stringstream inner_stream(value);
       std::string token;
-      while (std::getline(innerStream, token, ',')) {
+      while (std::getline(inner_stream, token, ',')) {
         T item;
-        std::stringstream tokenStream(trim(token));
-        tokenStream >> item;  // Extract the value of type T
-        innerArray.push_back(item);
+        std::stringstream token_stream(trim(token));
+        token_stream >> item;  // Extract the value of type T
+        inner_array.push_back(item);
       }
 
-      result.push_back(innerArray);
+      result.push_back(inner_array);
       if (ss.peek() == ']') ss.ignore();
       if (ss.peek() == ',') ss.ignore();
     }
     else if (std::isalpha(c) || c == '"' || std::isdigit(c) || c == '-' ||
              c == '.') {
       // Handling simple array case
-      std::vector<T> simpleArray;
+      std::vector<T> simple_array;
       ss.putback(c);  // Put back the character for reading
       std::string value;
       std::getline(ss, value, ']');
 
-      std::stringstream simpleStream(value);
+      std::stringstream simple_stream(value);
       std::string token;
-      while (std::getline(simpleStream, token, ',')) {
+      while (std::getline(simple_stream, token, ',')) {
         T item;
-        std::stringstream tokenStream(trim(token));
-        tokenStream >> item;  // Extract the value of type T
-        simpleArray.push_back(item);
+        std::stringstream token_stream(trim(token));
+        token_stream >> item;  // Extract the value of type T
+        simple_array.push_back(item);
       }
 
-      result.push_back(simpleArray);
+      result.push_back(simple_array);
       break;  // Since it's a single-level array, we can break the loop
     }
 
@@ -160,47 +156,61 @@ std::vector<std::vector<T>> parseNestedArray(const std::string &str)
   return result;
 }
 
-// Function to determine dimensions from a nested vector
 template <typename T>
-std::vector<size_t> determineDimensions(
-    const std::vector<std::vector<T>> &nestedArray)
+std::vector<size_t> determine_dimensions(
+    const std::vector<std::vector<T>> &nested_array)
 {
   std::vector<size_t> dims;
-  dims.push_back(nestedArray.size());
-  if (!nestedArray.empty()) {
-    dims.push_back(nestedArray[0].size());
+  dims.push_back(nested_array.size());
+  if (!nested_array.empty()) {
+    dims.push_back(nested_array[0].size());
   }
   return dims;
 }
 
-// Function to flatten nested vector into a flat vector
+// Reference deserialization helpers
+
 template <typename T>
-std::vector<T> flattenNestedArray(
-    const std::vector<std::vector<T>> &nestedArray)
+void add_references(std::unique_ptr<T> &node, const YAML::Node &yaml_node)
 {
-  std::vector<T> flatArray;
-  for (const auto &innerArray : nestedArray) {
-    flatArray.insert(flatArray.end(), innerArray.begin(), innerArray.end());
+  for (const auto &ref : yaml_node["references"]) {
+    auto nr = deserialize_node(ref);
+    if (nr) {
+      auto ref_type = ref["ref_type"]
+                          ? string_to_reftype(ref["ref_type"].as<std::string>())
+                          : EP_HAS_CHILD;
+      node->addReference(ref_type, std::move(nr));
+    }
   }
-  return flatArray;
 }
 
-// Function to create a flat buffer from a string representation of a
-// nested array
+// Array buffer helpers
+
 template <typename T>
-void *parseFlatBufferFromNestedArray(const std::string &str)
+std::vector<T> flatten_nested_array(
+    const std::vector<std::vector<T>> &nested_array)
 {
-  std::vector<std::vector<T>> nestedArray = parseNestedArray<T>(str);
-  //  std::vector<size_t> dimensions = determineDimensions(nestedArray);
-  std::vector<T> flatArray = flattenNestedArray(nestedArray);
+  std::vector<T> flat_array;
+  for (const auto &inner_array : nested_array) {
+    flat_array.insert(flat_array.end(), inner_array.begin(), inner_array.end());
+  }
+  return flat_array;
+}
+
+template <typename T>
+void *parse_flat_buffer_from_nested_array(const std::string &str)
+{
+  std::vector<std::vector<T>> nested_array = parse_nested_array<T>(str);
+  //  std::vector<size_t> dimensions = determine_dimensions(nested_array);
+  std::vector<T> flat_array = flatten_nested_array(nested_array);
   // Allocate memory for the flattened array
 
-  T *value = new T[flatArray.size()];
-  std::copy(flatArray.begin(), flatArray.end(), value);
+  T *value = new T[flat_array.size()];
+  std::copy(flat_array.begin(), flat_array.end(), value);
 
-  return (void *)value;
+  return static_cast<void *>(value);
 }
 
-}  // namespace ep
+}  // namespace epf
 
 #endif  // SERIALIZATION_H

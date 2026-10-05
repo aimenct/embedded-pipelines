@@ -1,0 +1,19 @@
+# FileSink full pipeline configuration template.
+# Copy/paste this block into your config.yml.
+
+filters:
+  - name: FileSink
+    type: FileSink
+    settings:
+      base:
+        # ---- FileSink built-in filter settings ----
+        path: ./                  # Output directory for .bin/.yml files
+        timeout: 0                # Read timeout (framework units)
+        max file size: 500000000  # Rotate files when size limit is reached
+
+      source_ports:
+        # FileSink is Filter(config, 10, 0): it consumes upstream source ports.
+        "0":
+          message_window: 1       # Items read per cycle
+          message_stride: 1       # New items required to run a cycle
+          blocking: true          # Block while waiting for data

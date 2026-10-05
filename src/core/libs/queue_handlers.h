@@ -9,32 +9,50 @@
 
 #include "queue.h"
 
-namespace ep {
+namespace epf {
 
 /**
  * @brief Class for writing messages to a queue.
  */
 class QueueWriter {
   private:
-    std::shared_ptr<Queue> q_; /**< Shared pointer to the queue object. */
-    Message data_msg_; /**< Data message object to write to the queue. */
-    Message hdr_msg_;  /**< Header message object to write to the queue. */
-    int id_;           /**< Writer ID. */
-    int lenA_, lenB_;  /**< Length of messages in parts A and B. */
-    char *dataPtrA_, *dataPtrB_; /**< Data pointers for parts A and B. */
-    char *hdrPtrA_, *hdrPtrB_;   /**< Header pointers for parts A and B. */
-    int messages_;               /**< Number of messages. */
-    int batch_size_;             /**< Number of messages to be read by call. */
+    Queue *queue_{nullptr}; /**< Pointer to the queue object. */
+
+    Message data_msg_{}; /**< Data message object to write to the queue. */
+    Message hdr_msg_{};  /**< Header message object to write to the queue. */
+    int32_t id_{-1};     /**< Writer ID. */
+
+    /**< Length of messages in parts A and B. */
+    int32_t len_a_{0};
+    int32_t len_b_{0};
+
+    /**< Data pointers for parts A and B. */
+    char *data_ptr_a_{nullptr};
+    char *data_ptr_b_{nullptr};
+
+    /**< Header pointers for parts A and B. */
+    char *hdr_ptr_a_{nullptr};
+    char *hdr_ptr_b_{nullptr};
+
+    int32_t messages_{1};   /**< Number of messages. */
+    int32_t batch_size_{1}; /**< Number of messages to be read by call. */
+
+    bool timestamp_enabled_{false}; /**< Automatic timestamp writing */
+    size_t timestamp_offset_{0};    /**< Offset inside header */
 
   public:
     /**
-     * @brief Constructor.
-     * @param queue_ptr Shared pointer to the queue object.
+     * @brief Default Constructor.
      */
-    QueueWriter(std::shared_ptr<Queue> queue_ptr);
+    QueueWriter() = default;
+    /**
+     * @brief Constructor.
+     * @param queue_ptr pointer to the queue object.
+     */
+    QueueWriter(Queue *queue_ptr);
 
     /**
-     * @brief Destructor. Handles cleanup of resources.
+     * @brief Default Destructor. Handles cleanup of resources.
      */
     ~QueueWriter();
 
@@ -52,22 +70,24 @@ class QueueWriter {
 
     /**
      * @brief Start writing a block of messages to the queue.
-     * @param msgs Number of messages to write.
+     * @param messages Number of messages to write.
      * @return Status code indicating success (>=0) or error (<0).
      */
-    int startWrite(int msgs);
+    int startWrite(int messages);
 
     /**
      * @brief End writing the message to the queue.
+     * @param done Number of completed messages to commit (-1 all pending).
      * @return Status code indicating success or error.
      */
-    int endWrite();
+    int endWrite(int done = -1);
 
     /**
      * @brief Abort writing due to a failure.
+     * @param pending Number of messages to roll back (-1 all pending).
      * @return Status code indicating success or error.
      */
-    int endWriteAbort();
+    int endWriteAbort(int pending = -1);
 
     /**
      * @brief Set blocking behavior for queue operations.
@@ -80,13 +100,13 @@ class QueueWriter {
      * @brief Get the data message pointer.
      * @return Pointer to the data message object.
      */
-    Message* dataSchema();
+    Message *dataSchema();
 
     /**
      * @brief Get the header message pointer.
      * @return Pointer to the header message object.
      */
-    Message* hdrSchema();
+    Message *hdrSchema();
 
     /**
      * @brief Get the number of available messages.
@@ -99,38 +119,52 @@ class QueueWriter {
      * @param i Index of the message.
      * @return Data message reference.
      */
-    Message& dataMsg(int i = 0);
+    Message *dataMsg(int i = 0);
 
     /**
      * @brief Get the header message reference for the ith message.
      * @param i Index of the message.
      * @return Header message reference.
      */
-    Message& hdrMsg(int i = 0);
+    Message *hdrMsg(int i = 0);
+
+    /**
+     * @brief Get the data pointer for a given queue index.
+     * @param idx Queue index.
+     * @return Pointer to the start of the data block for that index.
+     */
+    char *dataPtr(int idx) const;
+
+    /**
+     * @brief Prepare header message for a given queue index.
+     * @param idx Queue index.
+     * @return Header message reference.
+     */
+    Message *hdrMsgIdx(int idx);
 
     /**
      * @brief Get the pointer to the start of the data block (Part A).
      * @return Pointer to the start of serialized data block Part A.
      */
-    char* dataPtrA() const;
+    char *dataPtrA() const;
 
     /**
      * @brief Get the pointer to the start of the data block (Part B).
      * @return Pointer to the start of serialized data block Part B.
      */
-    char* dataPtrB() const;
+    char *dataPtrB() const;
 
     /**
      * @brief Get the pointer to the start of the header block (Part A).
      * @return Pointer to the start of serialized header block Part A.
      */
-    char* hdrPtrA() const;
+    char *hdrPtrA() const;
 
     /**
      * @brief Get the pointer to the start of the header block (Part B).
      * @return Pointer to the start of serialized header block Part B.
      */
-    char* hdrPtrB() const;
+    char *hdrPtrB() const;
 
     /**
      * @brief Get the number of messages in Part A.
@@ -157,24 +191,40 @@ class QueueWriter {
      */
     int batchSize() const;
 
-    /**
-     * @brief Get the shared pointer to the queue.
-     * @return Shared pointer to the queue object.
-     */
-    std::shared_ptr<Queue> queue() const;
+    /** Enable or disable automatic timestamping */
+    void enableTimestamp(bool flag);
 
-  private:
+    /** Set offset for timestamp inside header */
+    void setTimestampOffset(size_t offset);
+
+    /** Check if timestamp is enabled */
+    bool timestampEnabled() const;
+
+    /**
+     * @brief Get the pointer to the queue.
+     * @return pointer to the queue object.
+     */
+    Queue *queue() const;
+
     /**
      * @brief Subscribe the writer to the queue.
+     * @param Queue pointer.
      * @return Status code indicating success or error.
      */
-    int subscribe();
+    int subscribe(Queue *q);
 
     /**
      * @brief Unsubscribe the writer from the queue.
      * @return Status code indicating success or error.
      */
     int unsubscribe();
+
+    /**
+     * @brief Signal to wake up writers waiting in the queue.
+     * @return Status code indicating success or error.
+     */
+    int wakeUp();
+
 };  // QueueWriter Class
 
 /**
@@ -182,23 +232,36 @@ class QueueWriter {
  */
 class QueueReader {
   private:
-    std::shared_ptr<Queue> q_; /**< Shared pointer to the queue object. */
-    Message data_msg_; /**< Data message object to read from the queue. */
-    Message hdr_msg_;  /**< Header message object to read from the queue. */
-    int id_;           /**< Reader ID. */
-    int lenA_, lenB_;  /**< Length of messages in parts A and B. */
-    char *dataPtrA_, *dataPtrB_; /**< Data pointers for parts A and B. */
-    char *hdrPtrA_, *hdrPtrB_;   /**< Header pointers for parts A and B. */
-    int messages_;               /**< Number of messages. */
-    int batch_size_;             /**< Number of messages to be read by call. */
-    int new_per_batch_; /**< Number of new messages expected in the batch. */
+    Queue *queue_{nullptr}; /**< pointer to the queue object. */
+    Message data_msg_{};    /**< Data message object to read from the queue. */
+    Message hdr_msg_{}; /**< Header message object to read from the queue. */
+    int32_t id_{-1};    /**< Reader ID. */
+
+    /**< Length of messages in parts A and B. */
+    int32_t lenA_{0};
+    int32_t lenB_{0};
+
+    /**< Data pointers for parts A and B. */
+    char *dataPtrA_{nullptr};
+    char *dataPtrB_{nullptr};
+
+    /**< Header pointers for parts A and B. */
+    char *hdrPtrA_{nullptr};
+    char *hdrPtrB_{nullptr};
+
+    int32_t message_window_{1};  // Number of messages to be read.
+    int32_t message_stride_{1};  // Messages to advance after each read.
 
   public:
     /**
-     * @brief Constructor.
-     * @param queue_ptr Shared pointer to the queue object.
+     * @brief Default Constructor.
      */
-    QueueReader(std::shared_ptr<Queue> queue_ptr);
+    QueueReader() = default;
+    /**
+     * @brief Constructor.
+     * @param queue_ptr pointer to the queue object.
+     */
+    QueueReader(Queue *queue_ptr);
 
     /**
      * @brief Destructor. Handles cleanup of resources.
@@ -212,18 +275,19 @@ class QueueReader {
     int id() const;
 
     /**
-     * @brief Start reading a message from the queue.
+     * @brief Start reading using the configured message window and stride.
      * @return Status code indicating success (>=0) or error (<0).
      */
     int startRead();
 
     /**
      * @brief Start reading a block of messages from the queue.
-     * @param msgs Number of messages to read.
-     * @param new_msgs Number of new messages expected in the block.
+     * @param message_window Number of messages exposed in the read window.
+     * @param message_stride Number of messages by which the read window
+     * advances.
      * @return Status code indicating success (>=0) or error (<0).
      */
-    int startRead(int msgs, int new_msgs);
+    int startRead(int message_window, int message_stride);
 
     /**
      * @brief End reading the message from the queue.
@@ -248,57 +312,51 @@ class QueueReader {
      * @brief Get the data message pointer.
      * @return Pointer to the data message object.
      */
-    Message* dataSchema();
+    Message *dataSchema();
 
     /**
      * @brief Get the header message pointer.
      * @return Pointer to the header message object.
      */
-    Message* hdrSchema();
+    Message *hdrSchema();
 
     /**
-     * @brief Get the number of available messages.
-     * @return Number of available messages.
-     */
-    int msgCount() const;
-
-    /**
-     * @brief Get the data message reference for the ith message.
+     * @brief Get the data message pointer for the ith message.
      * @param i Index of the message.
-     * @return Data message reference.
+     * @return Data message pointer, nullptr if failed.
      */
-    Message& dataMsg(int i = 0);
+    Message *dataMsg(int i = 0);
 
     /**
-     * @brief Get the header message reference for the ith message.
+     * @brief Get the header message pointer for the ith message.
      * @param i Index of the message.
-     * @return Header message reference.
+     * @return Header message pointer, nullptr if failed.
      */
-    Message& hdrMsg(int i = 0);
+    Message *hdrMsg(int i = 0);
 
     /**
      * @brief Get the pointer to the start of the data block (Part A).
      * @return Pointer to the start of serialized data block Part A.
      */
-    char* dataPtrA() const;
+    char *dataPtrA() const;
 
     /**
      * @brief Get the pointer to the start of the data block (Part B).
      * @return Pointer to the start of serialized data block Part B.
      */
-    char* dataPtrB() const;
+    char *dataPtrB() const;
 
     /**
      * @brief Get the pointer to the start of the header block (Part A).
      * @return Pointer to the start of serialized header block Part A.
      */
-    char* hdrPtrA() const;
+    char *hdrPtrA() const;
 
     /**
      * @brief Get the pointer to the start of the header block (Part B).
      * @return Pointer to the start of serialized header block Part B.
      */
-    char* hdrPtrB() const;
+    char *hdrPtrB() const;
 
     /**
      * @brief Get the number of messages in Part A.
@@ -317,52 +375,54 @@ class QueueReader {
      * @param size Number of messages per batch.
      * @return Status code indicating success or error.
      */
-    int setBatchSize(int size);
+    int setMessageWindow(int size);
 
     /**
      * @brief Get the number of messages to read per batch.
      * @return Number of messages per batch.
      */
-    int batchSize() const;
+    int messageWindow() const;
 
     /**
      * @brief Set the number of new messages in the batch.
      * @param new_count Number of new messages expected.
      * @return Status code indicating success or error.
      */
-    int setNewPerBatch(int new_count);
+    int setMessageStride(int new_count);
 
     /**
      * @brief Get the number of new messages in the batch.
      * @return Number of new messages expected in the batch.
      */
-    int newPerBatch() const;
+    int messageStride() const;
 
     /**
-     * @brief Get the shared pointer to the queue.
-     * @return Shared pointer to the queue object.
+     * @brief Get a pointer to the queue.
+     * @return Raw pointer to the queue object (unsafe, can be dangling).
      */
-    std::shared_ptr<Queue> queue() const;
+    Queue *queue() const;
 
-  private:
     /**
      * @brief Subscribe the reader to the queue.
+     * @param Queue pointer.
      * @return Status code indicating success or error.
      */
-    int subscribe();
+    int subscribe(Queue *q);
 
     /**
      * @brief Unsubscribe the reader from the queue.
      * @return Status code indicating success or error.
      */
     int unsubscribe();
+
+    /**
+     * @brief Signal Wake up reader waiting in the queue.
+     * @return Status code indicating success or error.
+     */
+    int wakeUp();
+
 };  // QueueReader Class
 
-void queueReaderSettingsFromYaml(QueueReader* r, int index,
-                                 const YAML::Node& queueSettings);
-void queueWriterSettingsFromYaml(QueueWriter* w, int index,
-                                 const YAML::Node& queueSettings);
-
-}  // namespace ep
+}  // namespace epf
 
 #endif  // QUEUE_HANDLERS_H

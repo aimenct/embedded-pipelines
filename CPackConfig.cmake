@@ -2,8 +2,8 @@
 set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR}/packages)
 
 # Package information
-set(CPACK_PACKAGE_VENDOR "Aimen")
-set(CPACK_PACKAGE_CONTACT "Roi Mendez <roi.mendez@aimen.es>")
+set(CPACK_PACKAGE_VENDOR "AIMEN")
+set(CPACK_PACKAGE_CONTACT "S3M Department <aimen@aimen.es>")
 
 # Package version
 set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})

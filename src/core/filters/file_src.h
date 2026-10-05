@@ -16,26 +16,24 @@
 #include <string>
 #include <vector>
 
-#include "core.h"
+#include "../libs/filter.h"
+#include "../libs/serialization.h"
 
-namespace ep {
-class FileSrc : public Filter {
+class FileSrc : public epf::Filter {
   public:
-    FileSrc(const YAML::Node &config); 
-    ~FileSrc();                        
+    FileSrc(const YAML::Node &config);
+    ~FileSrc();
 
   protected:
-    int32_t _job();   
-    int32_t _open();  
-    int32_t _close(); 
-    int32_t _set();   
-    int32_t _reset(); 
-    int32_t _start(); 
-    int32_t _stop();  
+    int32_t _job();
+    int32_t _open();
+    int32_t _close();
+    int32_t _set();
+    int32_t _reset();
+    int32_t _start();
+    int32_t _stop();
 
   private:
-    YAML::Node yaml_config_;
-
     // Settings
     uint32_t timeout_;
     std::string data_filename_;
@@ -50,11 +48,10 @@ class FileSrc : public Filter {
     int32_t remaining_msgs_;
     int32_t batch_;
 
-    QueueWriter *w_;
+    epf::QueueWriter *w_;
 
     int openFiles();
     int closeFiles();
 };
-}  // namespace ep
 
 #endif  // FILESOURCE_H

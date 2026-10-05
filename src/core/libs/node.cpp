@@ -4,77 +4,99 @@
 
 #include "node.h"
 
-namespace ep {
-Reference::Reference(ep::RefType type, ep::Node2* address)
-    : address_(address)
+namespace epf {
+
+Reference::Reference(epf::RefType type, std::unique_ptr<epf::Node> address)
+    : type_(type),
+      address_(std::move(address))
 {
-  type_ = type;
 }
 
-ep::RefType Reference::type() const
+epf::RefType Reference::type() const
 {
   return type_;
 }
 
-Node2* Reference::address() const
+Node *Reference::address() const
 {
   return address_.get();
 }
 
-Node2::Node2(const Node2& obj)
+Node::Node(const Node &obj)
+    : name_(obj.name_),
+      nodetype_(obj.nodetype_),
+      tooltip_(obj.tooltip_),
+      access_mode_(obj.access_mode_),
+      visibility_(obj.visibility_)
+
 {
-  *this = obj;
+  // copyNodeChilds(obj);
 }
 
-const ep::Node2& Node2::operator=(const ep::Node2& obj)
+epf::Node &Node::operator=(const epf::Node &obj)
 {
+  if (this == &obj) {
+    return *this;
+  }
+
   references_.clear();
 
   name_ = obj.name_;
   nodetype_ = obj.nodetype_;
   tooltip_ = obj.tooltip_;
   visibility_ = obj.visibility_;
+  access_mode_ = obj.access_mode_;
+
+  // copyNodeChilds(obj);
 
   return *this;
 }
 
-Node2::~Node2()
+Node::~Node()
 {
   references_.clear();
 }
 
-std::string Node2::name() const
+std::string Node::name() const
 {
   return name_;
 }
 
-ep::NodeType Node2::nodetype() const
+epf::NodeType Node::nodetype() const
 {
   return nodetype_;
 }
 
-std::string Node2::tooltip() const
+std::string Node::tooltip() const
 {
   return tooltip_;
 }
 
-ep::VisibilityType Node2::visibility() const
+epf::VisibilityType Node::visibility() const
 {
   return visibility_;
 }
 
-void Node2::addReference(ep::RefType referencetype, ep::Node2* address)
+epf::AccessType Node::accessMode() const
 {
-  Reference new_ref(referencetype, address);
+  return access_mode_;
+}
+
+void Node::addReference(epf::RefType referencetype,
+                        std::unique_ptr<epf::Node> address)
+{
+  Reference new_ref(referencetype, std::move(address));
   references_.push_back(std::move(new_ref));
 }
 
-void Node2::removeReference(std::size_t index)
+void Node::removeReference(std::size_t index)
 {
-  references_.erase(references_.begin() + index);
+  auto it = references_.begin();
+  std::advance(it, index);
+  references_.erase(it);
 }
 
-void Node2::removeReference(ep::Node2* node)
+void Node::removeReference(epf::Node *node)
 {
   for (std::size_t i = 0; i < references_.size(); i++) {
     if (references_[i].address() == node) {
@@ -85,58 +107,52 @@ void Node2::removeReference(ep::Node2* node)
   throw;
 }
 
-const std::vector<ep::Reference>& Node2::references() const
+const std::vector<epf::Reference> &Node::references() const
 {
   return references_;
 }
 
-void Node2::setTooltip(const std::string& b)
+void Node::setTooltip(const std::string &b)
 {
   tooltip_ = b;
 }
 
-void Node2::setVisibility(const ep::VisibilityType& visibility)
+void Node::setVisibility(const epf::VisibilityType &visibility)
 {
   visibility_ = visibility;
 }
 
-const int& Node2::id() const
+void Node::setAccessMode(epf::AccessType access_mode)
 {
-  return id_;
+  access_mode_ = access_mode;
 }
 
-void Node2::setId(const int id)
-{
-  id_ = id;
-}
-
-void Node2::setName(const std::string name)
+void Node::setName(const std::string name)
 {
   name_ = name;
 }
 
-void Node2::print() const
+void Node::print() const
 {
   std::cout << this->name_ << ": ";
-  std::cout << "{nodetype: "
-            << "(" << ep::nodetype_to_string(this->nodetype_) << ")}"
-            << " ";
+  std::cout << "{nodetype: " << "(" << epf::nodetype_to_string(this->nodetype_)
+            << ")}" << " ";
   std::cout << "{tooltip:" << this->tooltip_ << "}";
   std::cout << std::endl;
 }
 
-void visit_node(const ep::Node2* node, int& level)
+void visit_node(const epf::Node *node, int &level)
 {
   for (int i = 0; i < level; i++) std::cout << "\t";
 
   if (node->isDataNode()) {
-    static_cast<const DataNode*>(node)->print();
+    static_cast<const DataNode *>(node)->print();
   }
-  else
-    //    node->print(online, full);
+  else {
     node->print();
+  }
 
-  for (const Reference& ref : node->references()) {
+  for (const Reference &ref : node->references()) {
     level = level + 1;
     //    visit_node(ref.address(), level, online, full);
     visit_node(ref.address(), level);
@@ -145,34 +161,40 @@ void visit_node(const ep::Node2* node, int& level)
   return;
 }
 
-void Node2::printTree() const
+void Node::printTree() const
 {
   int level = 0;
   visit_node(this, level);
 }
 
-void Node2::copyNodeChilds(const ep::Node2& node)
+void Node::copyNodeChilds(const epf::Node &node)
 {
-  for (const Reference& ref : node.references()) {
-    if (ref.address()->nodetype() == ep::EP_OBJECTNODE) {
-      ep::ObjectNode* new_node = new ObjectNode();
-      *new_node = *dynamic_cast<ep::ObjectNode*>(ref.address());
-      addReference(ref.type(), new_node);
-    }
-    else if (ref.address()->nodetype() == ep::EP_STRINGNODE) {
-      ep::StringNode* new_node = new StringNode();
-      *new_node = *dynamic_cast<ep::StringNode*>(ref.address());
-      addReference(ref.type(), new_node);
-    }
-    else if (ref.address()->nodetype() == ep::EP_DATANODE) {
-      ep::DataNode* new_node = new DataNode();
-      *new_node = *dynamic_cast<ep::DataNode*>(ref.address());
-      addReference(ref.type(), new_node);
-    }
-    else if (ref.address()->nodetype() == ep::EP_COMMANDNODE) {
-      ep::CommandNode* new_node = new CommandNode();
-      *new_node = *dynamic_cast<ep::CommandNode*>(ref.address());
-      addReference(ref.type(), new_node);
+  for (const Reference &ref : node.references()) {
+    switch (ref.address()->nodetype()) {
+      case epf::EP_OBJECTNODE: {
+        std::unique_ptr<ObjectNode> new_node = std::make_unique<ObjectNode>();
+        *new_node = *dynamic_cast<epf::ObjectNode *>(ref.address());
+        addReference(ref.type(), std::move(new_node));
+        break;
+      }
+      case epf::EP_STRINGNODE: {
+        std::unique_ptr<StringNode> new_node = std::make_unique<StringNode>();
+        *new_node = *dynamic_cast<epf::StringNode *>(ref.address());
+        addReference(ref.type(), std::move(new_node));
+        break;
+      }
+      case epf::EP_DATANODE: {
+        std::unique_ptr<DataNode> new_node = std::make_unique<DataNode>();
+        *new_node = *dynamic_cast<epf::DataNode *>(ref.address());
+        addReference(ref.type(), std::move(new_node));
+        break;
+      }
+      case epf::EP_COMMANDNODE: {
+        std::unique_ptr<CommandNode> new_node = std::make_unique<CommandNode>();
+        *new_node = *dynamic_cast<epf::CommandNode *>(ref.address());
+        addReference(ref.type(), std::move(new_node));
+        break;
+      }
     }
   }
 }
@@ -182,131 +204,192 @@ ObjectType ObjectNode::objecttype() const
   return objecttype_;
 }
 
-ObjectNode::ObjectNode(const ObjectNode& obj)
-    : Node2(obj)
+ObjectNode::ObjectNode(const ObjectNode &obj)
+    : Node(obj),
+      objecttype_(obj.objecttype_)
 {
-  *this = obj;
+  copyNodeChilds(obj);
 }
 
-const ep::ObjectNode& ObjectNode::operator=(const ep::ObjectNode& obj)
+epf::ObjectNode &ObjectNode::operator=(const epf::ObjectNode &obj)
 {
-  Node2::operator=(obj);
+  if (this == &obj) {
+    return *this;
+  }
+
+  Node::operator=(obj);
   objecttype_ = obj.objecttype_;
   copyNodeChilds(obj);
 
   return *this;
 }
 
-const std::string& StringNode::value() const
+std::string *StringNode::value() const
 {
   return value_;
 }
 
-StringNode::StringNode(const StringNode& obj)
-    : Node2(obj)
+StringNode::StringNode(const StringNode &obj)
+    : Node(obj),  // Base copy constructor
+      managed_data_(),
+      value_(nullptr)
 {
-  *this = obj;
+  copyFrom(obj);
 }
 
-const ep::StringNode& StringNode::operator=(const ep::StringNode& obj)
+StringNode &StringNode::operator=(const StringNode &obj)
 {
-  Node2::operator=(obj);
+  if (this == &obj) {
+    return *this;
+  }
 
-  value_ = obj.value_;
-
-  copyNodeChilds(obj);
+  Node::operator=(obj);  // Base assignment operator
+  copyFrom(obj);
 
   return *this;
 }
 
-void StringNode::setValue(std::string value)
+void StringNode::copyFrom(const StringNode &obj)
 {
-  value_ = value;
+  if (obj.value_ == &obj.managed_data_) {
+    managed_data_ = obj.managed_data_;
+    value_ = &managed_data_;
+  }
+  else {
+    managed_data_.clear();
+    value_ = obj.value_;  // Intentional shallow copy
+  }
+
+  copyNodeChilds(obj);
+}
+
+void StringNode::setValue(std::string *value)
+{
+  //  if (!memMgmt()) {
+  if (value_ != &managed_data_) {
+    value_ = value;
+  }
+  else {
+    std::cerr << "WARNING: In StringNode::setValue()" << name()
+              << "invalid when the memory is managed by the node." << std::endl;
+  }
+  //  value_ = value;
 }
 
 void StringNode::print() const
 {
   std::cout << this->name() << ": ";
-  std::cout << "{nodetype:" << ep::nodetype_to_string(this->nodetype()) << "} ";
+  std::cout << "{nodetype: " << epf::nodetype_to_string(this->nodetype())
+            << "} ";
 
   if (this->tooltip() != "") {
-    std::cout << "{tooltip:" << this->tooltip() << "} ";
+    std::cout << "{tooltip: " << this->tooltip() << "} ";
   }
-  std::cout << "{value:" << this->value() << "} ";
+  std::cout << "{value: " << *(this->value()) << "} ";
   std::cout << "\n";
 }
 
-DataNode::DataNode(const DataNode& obj)
-    : Node2(obj)
+DataNode::DataNode(std::string name, epf::BaseType datatype,
+                   std::vector<size_t> arraydim, void *value,
+                   bool memory_managed, std::string tooltip,
+                   epf::AccessType access_mode)
+    : Node(name, EP_DATANODE, tooltip, access_mode),
+      datatype_(datatype),
+      arraydimensions_(arraydim)
+// streamed_(streamed)
 {
-  streamed_ = 0;
-  memory_mgmt_ = 0;
-  value_ = nullptr;
-  *this = obj;
-}
-
-const ep::DataNode& DataNode::operator=(const ep::DataNode& obj)
-{
-  Node2::operator=(obj);
-
-  if ((this->memory_mgmt_ == 1) && (this->value_ != nullptr)) {
-    // deb
-    if (this->datatype_ == EP_STRING) {
-      delete[](std::string*) value_;
+  rank_ = 0;
+  size_ = type_size(datatype);
+  elements_ = 1;
+  for (size_t dim : arraydimensions_) {
+    if (dim > 0) {
+      rank_++;
+      size_ *= dim;
+      elements_ *= dim;
     }
-    else {
-      delete[](char*) value_;
-    }
-    value_ = nullptr;
   }
 
+  if (rank_ == 0) {
+    size_ = 0;
+    elements_ = 0;
+  }
+
+  if (memory_managed) {
+    // std::cout << "DataNode: " << name << " memory managed" << std::endl;
+    managed_data_ = std::make_unique<char[]>(size_);
+    if (value) {
+      memcpy(managed_data_.get(), value, size_);
+    }
+    else {
+      memset(managed_data_.get(), 0, size_);
+    }
+  }
+  else {
+    value_ = value;
+  }
+}
+
+DataNode::DataNode(const DataNode &obj)
+    : Node(obj),
+      datatype_(obj.datatype_),
+      arraydimensions_(obj.arraydimensions_),
+      size_(obj.size_),
+      rank_(obj.rank_),
+      elements_(obj.elements_)
+{
+  copyFrom(obj);
+}
+
+epf::DataNode &DataNode::operator=(const epf::DataNode &obj)
+{
+  if (this == &obj) {
+    return *this;
+  }
+
+  Node::operator=(obj);
+
   datatype_ = obj.datatype_;
-  value_ = obj.value_;
   arraydimensions_ = obj.arraydimensions_;
   rank_ = obj.rank_;
-  accessmode_ = obj.accessmode_;
   size_ = obj.size_;
   elements_ = obj.elements_;
 
-  streamed_ = obj.streamed_;
-  offset_ = obj.offset_;
-  ptr_msg_ = obj.ptr_msg_;
-  memory_mgmt_ = obj.memory_mgmt_;
-
-  if (obj.memory_mgmt_) {
-    if (datatype_ == EP_STRING) {
-      value_ = (void*)new std::string[elements_];
-      for (int i = 0; i < elements_; i++) {
-        ((std::string*)value_)[i] = ((std::string*)obj.value_)[i];
-      }
-    }
-    else {
-      value_ = new char[size_];
-      memcpy(this->value_, obj.value_, this->size_);
-    }
-  }
-
-  copyNodeChilds(obj);
+  copyFrom(obj);
 
   return *this;
 }
 
-void* DataNode::value() const
+void DataNode::copyFrom(const DataNode &obj)
 {
-  return value_;
+  if (obj.memMgmt()) {
+    managed_data_ = std::make_unique<char[]>(size_);
+    memcpy(this->value(), obj.value(), this->size());
+    value_ = nullptr;
+  }
+  else {
+    managed_data_.reset();
+    value_ = obj.value();
+  }
+
+  copyNodeChilds(obj);
 }
 
-ep::BaseType DataNode::datatype() const
+void *DataNode::value() const
+{
+  if (memMgmt()) {
+    return managed_data_.get();
+  }
+  else {
+    return value_;
+  }
+}
+
+epf::BaseType DataNode::datatype() const
 {
   return datatype_;
 }
 
-ep::AccessType DataNode::accessMode() const
-{
-  return accessmode_;
-}
-
-void DataNode::setDatatype(ep::BaseType datatype)
+void DataNode::setDatatype(epf::BaseType datatype)
 {
   datatype_ = datatype;
 }
@@ -321,7 +404,7 @@ int32_t DataNode::rank() const
   return rank_;
 }
 
-int DataNode::arrayelements() const
+size_t DataNode::arrayelements() const
 {
   return elements_;
 }
@@ -331,23 +414,58 @@ std::vector<size_t> DataNode::arraydimensions() const
   return arraydimensions_;
 }
 
-void DataNode::setValue(void* invalue)
+void DataNode::setValue(void *invalue)
 {
-  value_ = invalue;
+  if (!memMgmt()) {
+    value_ = invalue;
+  }
+  else {
+    if (invalue == nullptr) {
+      std::cerr << "WARNING: In DataNode::setValue() " << name()
+                << " received nullptr for memory-managed node." << std::endl;
+      return;
+    }
+    if (!managed_data_) {
+      managed_data_ = std::make_unique<char[]>(size_);
+    }
+    memcpy(managed_data_.get(), invalue, size_);
+  }
 }
 
 void DataNode::setSize(size_t sizein)
 {
-  size_ = sizein;
+  if (!memMgmt()) {
+    size_ = sizein;
+  }
+  else {
+    std::cerr << "WARNING: In DataNode::setSize()" << name()
+              << "invalid when the memory is managed by the node." << std::endl;
+  }
 }
 
-void DataNode::setAccessMode(ep::AccessType c)
-{
-  accessmode_ = c;
-}
 void DataNode::setRank(int rank)
 {
   rank_ = rank;
+}
+
+int32_t DataNode::write(const void *value)
+{
+  if ((this->value() == nullptr) || (value == nullptr)) {
+    std::cerr << "DataNode write error value == nullptr \n" << std::endl;
+    return -1;
+  }
+  memcpy(this->value(), value, this->size());
+  return 0;
+}
+
+int32_t DataNode::read(void *value) const
+{
+  if ((this->value() == nullptr) || (value == nullptr)) {
+    std::cerr << "DataNode read error value == nullptr \n" << std::endl;
+    return -1;
+  }
+  memcpy(value, this->value(), this->size());
+  return 0;
 }
 
 void DataNode::print() const
@@ -355,11 +473,11 @@ void DataNode::print() const
   std::cout << this->name() << ": ";
 
   // Print node type
-  std::cout << "{nodetype: " << ep::nodetype_to_string(this->nodetype())
+  std::cout << "{nodetype: " << epf::nodetype_to_string(this->nodetype())
             << "} ";
 
   // Print data type
-  std::cout << "{datatype: " << ep::basetype_to_string(this->datatype())
+  std::cout << "{datatype: " << epf::basetype_to_string(this->datatype())
             << "} ";
 
   // Print tooltip if it is not empty
@@ -367,15 +485,10 @@ void DataNode::print() const
     std::cout << "{tooltip: " << this->tooltip() << "} ";
   }
 
-  // Print if streamed
-  if (streamed_) {
-    std::cout << "{streamed} ";
-  }
-
   // Print access mode
-  if (this->accessmode_ != 0) {
-    std::cout << "{accessmode: " << ep::accesstype_to_string(this->accessmode_)
-              << "} ";
+  if (this->accessMode() != 0) {
+    std::cout << "{accessmode: "
+              << epf::accesstype_to_string(this->accessMode()) << "} ";
   }
 
   if (elements_ == 1)
@@ -392,7 +505,7 @@ void DataNode::print() const
   }
 
   // Print value based on datatype
-  if (this->value_) {
+  if (this->value()) {
     std::cout << "{value: ";
 
     // Print array values
@@ -402,58 +515,58 @@ void DataNode::print() const
       size_t total_elements = this->arrayelements();
 
       // Determine how many elements to print
-      size_t print_limit = std::min(
-          total_elements,
-          static_cast<size_t>(10));  // Print first 10 or fewer elements
+      // Print first 10 or fewer elements
+      size_t print_limit = std::min(total_elements, static_cast<size_t>(10));
 
       size_t printed = 0;
       for (size_t i = 0; i < total_elements; ++i) {
-        if (i > 0) std::cout << ", ";
+        if (i > 0) {
+          std::cout << ", ";
+        }
+
         if (printed >= print_limit) {
-          std::cout << "...";  // Indicate that not all elements are printed
+          // Indicate that not all elements are printed
+          std::cout << "...";
           break;
         }
 
         // Access and print value based on datatype
         switch (this->datatype()) {
           case EP_BOOL:
-            std::cout << static_cast<bool*>(this->value_)[i];
+            std::cout << static_cast<bool *>(this->value())[i];
             break;
           case EP_8C:
-            std::cout << static_cast<char*>(this->value_)[i];
+            std::cout << static_cast<char *>(this->value())[i];
             break;
           case EP_8S:
-            std::cout << static_cast<int8_t*>(this->value_)[i];
+            std::cout << static_cast<int8_t *>(this->value())[i];
             break;
           case EP_8U:
-            std::cout << static_cast<uint8_t*>(this->value_)[i];
+            std::cout << static_cast<uint8_t *>(this->value())[i];
             break;
           case EP_16S:
-            std::cout << static_cast<int16_t*>(this->value_)[i];
+            std::cout << static_cast<int16_t *>(this->value())[i];
             break;
           case EP_16U:
-            std::cout << static_cast<uint16_t*>(this->value_)[i];
+            std::cout << static_cast<uint16_t *>(this->value())[i];
             break;
           case EP_32S:
-            std::cout << static_cast<int32_t*>(this->value_)[i];
+            std::cout << static_cast<int32_t *>(this->value())[i];
             break;
           case EP_32U:
-            std::cout << static_cast<uint32_t*>(this->value_)[i];
+            std::cout << static_cast<uint32_t *>(this->value())[i];
             break;
           case EP_64S:
-            std::cout << static_cast<int64_t*>(this->value_)[i];
+            std::cout << static_cast<int64_t *>(this->value())[i];
             break;
           case EP_64U:
-            std::cout << static_cast<uint64_t*>(this->value_)[i];
+            std::cout << static_cast<uint64_t *>(this->value())[i];
             break;
           case EP_32F:
-            std::cout << static_cast<float*>(this->value_)[i];
+            std::cout << static_cast<float *>(this->value())[i];
             break;
           case EP_64F:
-            std::cout << static_cast<double*>(this->value_)[i];
-            break;
-          case EP_STRING:
-            std::cout << static_cast<std::string*>(this->value_)[i];
+            std::cout << static_cast<double *>(this->value())[i];
             break;
           default:
             std::cout << "NULL";
@@ -468,43 +581,40 @@ void DataNode::print() const
       // Print single value for non-array types
       switch (this->datatype()) {
         case EP_BOOL:
-          std::cout << *static_cast<bool*>(this->value_);
+          std::cout << *static_cast<bool *>(this->value());
           break;
         case EP_8C:
-          std::cout << *static_cast<char*>(this->value_);
+          std::cout << *static_cast<char *>(this->value());
           break;
         case EP_8S:
-          std::cout << *static_cast<int8_t*>(this->value_);
+          std::cout << *static_cast<int8_t *>(this->value());
           break;
         case EP_8U:
-          std::cout << *static_cast<uint8_t*>(this->value_);
+          std::cout << *static_cast<uint8_t *>(this->value());
           break;
         case EP_16S:
-          std::cout << *static_cast<int16_t*>(this->value_);
+          std::cout << *static_cast<int16_t *>(this->value());
           break;
         case EP_16U:
-          std::cout << *static_cast<uint16_t*>(this->value_);
+          std::cout << *static_cast<uint16_t *>(this->value());
           break;
         case EP_32S:
-          std::cout << *static_cast<int32_t*>(this->value_);
+          std::cout << *static_cast<int32_t *>(this->value());
           break;
         case EP_32U:
-          std::cout << *static_cast<uint32_t*>(this->value_);
+          std::cout << *static_cast<uint32_t *>(this->value());
           break;
         case EP_64S:
-          std::cout << *static_cast<int64_t*>(this->value_);
+          std::cout << *static_cast<int64_t *>(this->value());
           break;
         case EP_64U:
-          std::cout << *static_cast<uint64_t*>(this->value_);
+          std::cout << *static_cast<uint64_t *>(this->value());
           break;
         case EP_32F:
-          std::cout << *static_cast<float*>(this->value_);
+          std::cout << *static_cast<float *>(this->value());
           break;
         case EP_64F:
-          std::cout << *static_cast<double*>(this->value_);
-          break;
-        case EP_STRING:
-          std::cout << *static_cast<std::string*>(this->value_);
+          std::cout << *static_cast<double *>(this->value());
           break;
         default:
           std::cout << "NULL";
@@ -518,20 +628,29 @@ void DataNode::print() const
   std::cout << std::endl;
 }
 
-CommandNode::CommandNode(const CommandNode& obj)
-    : Node2(obj)
+bool DataNode::memMgmt() const
 {
-  *this = obj;
+  if (managed_data_.get()) {
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
-const ep::CommandNode& CommandNode::operator=(const ep::CommandNode& obj)
+CommandNode::CommandNode(const CommandNode &obj)
+    : Node(obj),
+      command_(obj.command_)
 {
-  Node2::operator=(obj);
+}
 
-  command_ = obj.command_;
-
-  copyNodeChilds(obj);
-
+const epf::CommandNode &CommandNode::operator=(const epf::CommandNode &obj)
+{
+  if (this != &obj) {
+    Node::operator=(obj);
+    command_ = obj.command_;
+    copyNodeChilds(obj);
+  }
   return *this;
 }
 
@@ -540,9 +659,4 @@ int32_t CommandNode::run() const
   return command_();
 }
 
-AccessType CommandNode::accessMode() const
-{
-  return accessmode_;
-}
-
-}  // namespace ep
+}  // namespace epf

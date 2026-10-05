@@ -1,0 +1,187 @@
+# GlutDisplay full pipeline configuration template.
+#
+# Purpose:
+#   GlutDisplay is a visualization sink filter. It consumes upstream data from
+#   source ports and opens one or more interactive GLUT windows for live display.
+#
+# Supported window types:
+#   Image : displays an EPF raw image object through ImageWindow.
+#   Plot2 : displays a 2D signal or y-vs-x plot.
+#   Plot3 : displays a 3D point cloud / trajectory / sampled surface.
+#
+# Source triplet format:
+#   [source_port, item_index, data|header]
+#
+# Meaning:
+#   source_port : upstream filter output port connected to this display filter
+#   item_index  : item index in the queue message/schema
+#   data|header : read the item from the data message or header message
+#
+# Notes:
+#   - Window positions and sizes are automatically arranged in a screen grid.
+#   - update interval is in milliseconds.
+#   - GlutDisplay is a sink/monitoring filter; it does not produce output data.
+#   - Image display supports directly uploadable image formats such as
+#     Mono8, Mono16, BIP32f, RGB8, and BGR8.
+#   - Packed/YUV/planar image formats require conversion before display.
+#   - Plot2 requires y; x is optional. If x is omitted, sample index is used.
+#   - Plot3 requires x, y, z. v is optional. If v is omitted, z is used for color.
+#
+# Image probe:
+#   Image windows can optionally print pixel values on mouse hover/click.
+#   This is generic and can be used for temperature, depth, confidence, raw
+#   counts, masks, or any scalar/multichannel image magnitude.
+#
+#   If probe.enabled is true and no "probe source" is provided, the displayed
+#   image itself is probed.
+#
+#   If "probe source" is provided, it must use the same source_port as "source".
+#   This keeps display and probe data synchronized through the same queue reader.
+#   If a different port is used, GlutDisplay should warn and disable/ignore the
+#   probe source.
+#
+#   Typical thermography example:
+#     source       : RGB8/BGR8 jet image for display
+#     probe source : BIP32f temperature map with same width/height
+#
+#   Probe modes:
+#     click : print value on left mouse click
+#     hover : print value on mouse move, throttled
+#     both  : enable click and hover
+#
+#   Units are user-defined strings, for example "degC", "K", "counts", "mm".
+
+filters:
+  - name: Display
+    type: GlutDisplay
+
+    windows:
+      # ------------------------------------------------------------
+      # Image window: display only
+      # ------------------------------------------------------------
+      - name: Camera Image
+        type: Image
+        source: [0, 0, data]
+        update interval: 40
+
+      # ------------------------------------------------------------
+      # Image window: probe displayed image
+      #
+      # No "probe source" is provided, so the displayed image is probed.
+      # Useful for raw sensor counts, mono images, masks, etc.
+      # ------------------------------------------------------------
+      - name: Raw Sensor With Probe
+        type: Image
+        source: [0, 0, data]
+        probe:
+          enabled: true
+          mode: click
+          units: "counts"
+          precision: 0
+          throttle ms: 100
+        update interval: 40
+
+      # ------------------------------------------------------------
+      # Image window: temperature map
+      #
+      # Displays a BIP32f image. By default, single-channel float images
+      # are autoscaled only for visualization, so values like 1450–1480 degC
+      # are mapped to visible grayscale.
+      #
+      # The underlying image data is not modified. Probe still reads the
+      # original BIP32f values, e.g. degC.
+      # ------------------------------------------------------------
+      - name: Temperature Map
+        type: Image
+        source: [0, 1, data]
+        float autoscale: true   # display-only autoscale; probe remains in degC
+        probe:
+          enabled: true
+          mode: both
+          units: "degC"
+          precision: 2
+          throttle ms: 100
+        update interval: 40       
+        
+      # ------------------------------------------------------------
+      # Image window: color image with separate value probe
+      #
+      # Displays a colorized RGB8/BGR8 image, but probes the aligned BIP32f
+      # temperature map. "source" and "probe source" must use the same port.
+      # ------------------------------------------------------------
+      - name: Thermal Jet With Temperature Probe
+        type: Image
+        source: [0, 2, data]          # displayed RGB8/BGR8 colormap image
+        probe source: [0, 1, data]    # aligned scalar image, same source port
+        probe:
+          enabled: true
+          mode: both
+          units: "degC"
+          precision: 2
+          throttle ms: 100
+        update interval: 40
+
+      # ------------------------------------------------------------
+      # 2D plot window
+      #
+      # y is required.
+      # x is optional. If omitted, Plot2DWindow uses sample index.
+      # ------------------------------------------------------------
+      - name: Plot Y vs X
+        type: Plot2
+        source:
+          x: [0, 1, data]
+          y: [0, 2, data]
+        update interval: 40
+
+      # Example Plot2 with implicit X/sample index:
+      - name: Plot Y vs Sample
+        type: Plot2
+        source:
+          y: [0, 2, data]
+        update interval: 40
+
+      # ------------------------------------------------------------
+      # 3D plot window
+      #
+      # x, y, z are required.
+      # v is optional and controls color. If omitted, z controls color.
+      # ------------------------------------------------------------
+      - name: Plot3 Demo
+        type: Plot3
+        source:
+          x: [0, 0, data]
+          y: [0, 1, data]
+          z: [0, 2, data]
+          v: [0, 3, data]
+        step: 1
+        batch: 500
+        buffer length: 1000
+        update interval: 40
+
+      # Example Plot3 without v:
+      - name: Plot3 Z Colored
+        type: Plot3
+        source:
+          x: [0, 0, data]
+          y: [0, 1, data]
+          z: [0, 2, data]
+        step: 1
+        batch: 500
+        buffer length: 1000
+        update interval: 40
+
+    settings:
+      source_ports:
+        # GlutDisplay is constructed as Filter(config, 10, 0):
+        #   10 source ports, 0 sink/output ports.
+        #
+        # The display consumes upstream queue messages from these ports.
+        #
+        # For synchronized display/probe image use cases, put the displayed
+        # image and probe image in the same upstream queue/message and select
+        # them by different item_index values.
+        "0":
+          message_window: 1
+          message_stride: 1
+          blocking: true

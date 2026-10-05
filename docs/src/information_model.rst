@@ -1,146 +1,146 @@
 Information Model
 =================
 
-The information model in the Edge Processing Pipelines Framework (EPPF) is structured around the concepts of **nodes** and **node trees**. Nodes represent discrete entities of information, encapsulating specific attributes and values. These nodes are organized hierarchically, connected by references in a tree-like structure that forms parent-child relationships. This architecture allows for the efficient representation of objects and complex data relationships.
+Embeded Pipelines information model main purpose is to describe the raw data that goes through the queues, and allow readers and writers to correctly interpret them. Besides, it also serve to describe and organise filter settings. Its flexibility also allows to represent even complex hierarchical models like GeniCam XML description files, Asset Administration Shell (AAS) or OPC-UA server nodes.
 
-The information model is versatile, supporting various types of data and relationships (reference types). Nodes can be used to represent everything from simple variables to more complex objects like a Genicam camera description file, Asset Administration Shell model, or an OPC-UA server. This flexibility makes the information model integral to managing and interacting with the data in the application.
+It is structured around the concepts of **nodes** and **node trees**. Nodes represent discrete entities of information, encapsulating specific attributes and values. These nodes are organized hierarchically, connected by references in a tree-like structure that forms diffrent types parent-child relationships. This architecture allows for the efficient representation of objects and complex data relationships.
 
 Node
 ----
 
 A **Node** is a universal class designed to represent one or more memory locations in the system, with the capability to relate these locations hierarchically. The Node class can represent various structures, such as simple variables, lists, or more complex entities like a Genicam tree or an OPC-UA server.
 
-Different classes of nodes are defined to serve specific roles:
+Different sub-classes of nodes are defined to serve specific roles.
 
-- **ObjectNode**: Represents an organizational structure, typically used to group other nodes.
-- **DataNode**: Contains a value pointer representing a data variable of a certain type (i.e., multidimensional array of BaseType link). There are three types of DataNodes:
+ObjectNode
+^^^^^^^^^^ 
 
-  - **Memory Managed DataNodes**: Nodes that manage the memory they point to.
-
-  - **Not Memory Managed DataNodes**: Nodes that do not manage the memory they point to, further divided into:
-
-    - **Streamed**: The data value is streamed through a Queue’s circular buffer. 
-    - **Not Streamed**: The data values that is not streamed through a Queue’s circular buffer.
-
-- **CommandNode**: Represents a function that can be invoked without parameters.
+Represents an organizational structure, typically used to group other nodes.
 
 .. code-block:: cpp
 
-	# Object Node
-	ObjectNode my_folder("my folder 1");
+	// Object Node
+	ObjectNode* folder_node = ObjecNode("my_folder");
 
-	# Instantiation of different DataNodes
-	# - memory managed, double, scalar 
-	DataNode node_1("my node 1", EP_64F, {1});
-	node_1->print()
+Detailed info of ObjectNode API can be found here here :ref:`objectnode_api`.
 
-	# - memory managed, double, 2x2 array
-	DataNode node_2("my node 2", EP_64F, {2,2});
-	node_2->print()
 
+DataNode
+^^^^^^^^
+
+Contains a value pointer representing a data variable of a certain type (i.e., multidimensional array of BaseType link). There are three types of DataNodes:
+
+- **Memory Managed DataNodes**: Nodes that manage the memory they point to.
+
+- **Not Memory Managed DataNodes**: Nodes that do not manage the memory they point to, further divided into:
+
+	- **Streamed**: The data value is streamed through a Queue’s circular buffer. 
+	- **Not Streamed**: The data values that is not streamed through a Queue’s circular buffer.
+
+.. code-block:: cpp
+	
+	// Different ways of instantiate DataNodes
+
+	// Full constructor (prefered for novel users)
+	// - memory managed, 3d double array
+	double array[] = {6, 8, 6};
+	DataNode *node_0 = new DataNode("my_node_0", EP_64F, {3}, array, true /*memory_managed*/,
+									false /*streamed*/, "a 3d vector" /*tooltip*/, W /*accessmode*/);
+	node_0->print();
+
+	// (Advanced) Implicit memory_managed DataNode instatiation
+	// - memory managed, double, scalar
+	DataNode *node_1 = new DataNode("my_node_1", EP_64F, {1});
+	node_1->print();
+
+	// (Advanced) Implicit memory_managed DataNode instatiation
+	// - memory managed, double, 2x2 array
+	DataNode *node_2 = new DataNode("my_node_2", EP_64F, {2, 2});
+	node_2->print();
+
+	// (Advanced) Implicit not memory_managed DataNode instatiation
+	// - not memory managed, float, scalar
 	float data = 40;
-	# - not memory managed, float, scalar
-	DataNode node_3("my node 3", EP_32S, {1}, &data);
-	node_3->print()
+	DataNode *node_3 = new DataNode("my_node_3", EP_32F, {1}, &data);
+	node_3->print();
 
-	# - streamed, float, scalar
-	DataNode node_4("my node 4", EP_32S, {1}, nullptr);
-	node_4->print()
+	// (Advanced) When instatiateted with a nullptr as address,
+	// the DataNode is supposed to be streamed
+	// - not memory managed, streamed, int32_t, scalar
+	DataNode *node_4 = new DataNode("my_node_4", EP_32S, {1}, nullptr);
+	node_4->print();
 
-	# Command Node
+Detailed info of DataNode API can be found here here :ref:`datanode_api`.
+
+CommandNode
+^^^^^^^^^^^
+
+Represents a function that can be invoked without parameters.
+
+.. code-block:: cpp
+	
+	// Command Node
 	CommandNode my_command("reset");
 
-	# NodeTree
-	my_folder.addReference(ep::EP_HAS_CHILD,node_1);
-	my_folder.addReference(ep::EP_HAS_CHILD,node_1);
-	my_folder.addReference(ep::EP_HAS_CHILD,node_1);
-	my_folder.addReference(ep::EP_HAS_CHILD,node_1);
+Detailed info of CommandNode API can be found here here :ref:`commandnode_api`.
 
-	my_folder.printTree();
+References
+^^^^^^^^^^
 
-Output:
+To group them and establish its relationships, child nodes need to be dynamically allocated. Once one node is added as child of other node, the parent acquires ownership of it. Therefore, its lifecycle will be linked to its parent. This way, deleting the root node of a tree, also automatically deletes the whole tree. Check the following example: 
+
+.. code-block:: cpp
 	
-.. code-block:: text
+	// Adding references
+	my_folder->addReference(epf::EP_HAS_CHILD,node_0);
+	my_folder->addReference(epf::EP_HAS_CHILD,node_1);
+	my_folder->addReference(epf::EP_HAS_CHILD,node_2);
+	my_folder->addReference(epf::EP_HAS_CHILD,node_3);
+	node_0->addReference(epf::EP_HAS_CHILD,node_4);
+	
 
-   Output from my_node->print():
-   [Your output here, e.g., details of the DataNode structure]
+	// When deleting the root node every child and their memory (if managed) is destroyed as well.
+	delete my_folder;
+	
 
-   Output from memory_managed_node->print():
-   [Your output here, e.g., details of the DataNode structure]
+NodeTree
+--------
 
-   Output from streamed_node->print():
-   [Your output here, e.g., details of the DataNode structure] 
+NodeTree class implements methods that make it easier to navigate, process, and control the three of nodes. Two main classes are derived from NodeTree: **Message** which represents the data packets stream through **Queues**, and **Settings** which provides an interface for the control parameters of each filter.
 
-- **NodeTree** class is provided to efficiently manage the hierarchically node-tree structure. It implements methods that make it easier to navigate, process, and control the three of nodes. Two main classes are derived from NodeTree: **Message** which represents the data packets stream through **Queues**, and **Settings** which provides an interface for the control parameters of each filter.
+Check additional info of *NodeTree* API here :ref:`nodetree_api`.
 
 Message
 -------
 
-Messages are the unit of information communicated between Filters that are placed in the message Queues.
-Messages are structured in a node tree-based format following the information model described in section XX to ensure filters can correct interpret the data.
-It contains static data and streaming data (data passed through the Queue's circular buffer).
-To facilitate the serach of data within a Messages, these are at the same time break down in Items.
+Messages are the same-sized information data packets communicated between Filters through Queues. Their organisation is described using *Nodes*, inheriting from *NodeTree*. This way filters can interpret the data. They can contain both static and streaming data (the actual bits passed through the Queue's circular buffer). Messages are at the same time break down in **Items**.
 
-```cpp
-class Messages
-```
+Check additional info of *Message* API here :ref:`message_api`.
 
 Item
 ^^^^
 
-- **Items**: Is the basic element of data with ontological sense. In the frame of a Message, an Item is the root node childs (OPC-UA [REF2](https://reference.opcfoundation.org/Core/Part8/v105/docs/4#Figure1) and [REF2](https://reference.opcfoundation.org/Core/Part8/v105/docs/3.1.1)).
+An item is the basic element of data with ontological sense. In EPF, items are implmented as child nodes of Message root node.
 
-```cpp
-Item
-```
-
-.. code-block:: yaml
-		
-	name: RGB
-	type: ArvCam
-	filter_settings:
-          timeout: 10
-	  counter init: 0
-	  metadata: This is a dummy Filter.
-	device_settings:
-	  dummy_setting: 0
-	  dummy_offset: 50	
-	queue_settings:
-	  sources: 1
-	  sinks: 1
-	  sink queues:
-	  - id: 0
-	    length: 10
-	    type: lifo
-	    max consumers: 5
-	  writers:
-	  - id: 0
-	    batch: 10
-	    blocking: true
-	  readers:
-	  - id: 0
-	    batch: 10
-	    new per batch: 5
-	    blocking: true
+..
+  (OPC-UA [REF2](https://reference.opcfoundation.org/Core/Part8/v105/docs/4#Figure1) and [REF2](https://reference.opcfoundation.org/Core/Part8/v105/docs/3.1.1)).
 
 
-Messages are the data packets that pass through the pipeline. Message class serves two main purposes: i) define the equally sized data schema of the Messages that will be pass through a **Queue**, ii) 
 
-Messages are node trees with one root node. To facilitate the navigation messages are organized in **Items**. Items are the childs of the root node, can be simple DataNodes or more complex Object structures.
 
 .. code-block:: cpp
 
-    DataNode current_units = new DataNode(EP_STRING,{1});
-    sprintf(current_units->value(),"mW");
+	std::string current_units = "mW";
+    DataNode current_units = new DataNode(EP_STRING, {1}, &current_units, true);
     
-    DataNode current = new DataNode(EP_32S,{1},nullptr);
-    current->hasChild(current_units,EP_PROPERTY);
+    DataNode current = new DataNode(EP_32S, {1}, nullptr);
+    current->addReference(current_units,EP_PROPERTY);
 
-    DataNode voltage_units = new DataNode(EP_STRING,{1});
-    sprintf(voltage_units->value(),"mV");
+	std::string voltage_units = "mV";
+    DataNode voltage_units = new DataNode(EP_STRING, {1}, &voltage_units, true);
     
     DataNode voltage = new DataNode(EP_32S,{1},nullptr);
-    voltage->hasChild(voltage_units,EP_PROPERTY); // voltage has ownership of voltage units DN memory
+    voltage->addReference(voltage_units,EP_PROPERTY); // voltage has ownership of voltage units DN memory
    
     Message my_msg;  
     msg.addItem(current); // msg get ownership of current memory
@@ -151,19 +151,87 @@ Output:
 
 .. code-block:: text
 
-    Tree like strcuture message
+    PENDENT
 
     
 Settings
 --------
 
-Settings configure the behavior of Filters and Pipelines.
+Settings provide an interface for adding modifiable parameters to *Filters*. They are implmented using the *Settings* class and they are embedded in the abstract *Filter* class as a varaible. Internally, they are expressed also as using *Nodes* by inheriting from the base class *NodeTree*. Therefore, each settings binds to a class variable without actually manage its memory.
+
+The *Filter* base class offers a methods to add settings, to modify them or to read/write from files; so the user does not need to manage it directly.
+
+
+When added as a setting, *Filter* also provides a method that reads a YAML::Node and parse settings values. The files have the following structure:
+
+.. code-block:: yaml
+	## config.yaml
+	filters:	
+	  - name: filter
+	    type: MyFilter
+	    filter_settings:
+          exposure: 500
+
+Here is a *Filter* with a constructor adding filters adding, accessing and modifying settings:
 
 .. code-block:: cpp
       
-   Settingse my_settings;
-   my_settings.addSetting();
+	#include <embedded-pipelines/core/core.h>
+	#include <stdio.h>
+
+	class MyFilter : public epf::Filter
+	{
+	public:
+	  double exposure_time_ = 100.;
+
+	  MyFilter(YAML::Node &config) : Filter()
+	  {
+		
+		// Link "exposure_variable" to "exposure" setting
+		this->addSetting("exposure", exposure_time_);
+
+		// Changing the variable also changes the value in setting
+		exposure_time_ = 200.;
+		std::cout << "exposure: " << *settingValue<double>("exposure") << std::endl; // 200.
+
+		// Using the set method also updates the original value
+		this->setSettingValue<double>("exposure", 10.);
+		std::cout << "exposure: " << exposure_time_ << std::endl; // 10.
+
+		double new_value = 150.;
+		// Copies the value to the original address
+		this->setSettingValue("exposure", new_value);
+		std::cout << "exposure_time (variable): " << exposure_time_ << std::endl; // 150.
+
+		readSettings(config);
+	  };
+
+	protected:
+	  int32_t _job() { return 0; };
+	  int32_t _open() { return 0; };
+	  int32_t _close() { return 0; };
+	  int32_t _set() { return 0; };
+	  int32_t _reset() { return 0; };
+	  int32_t _start() { return 0; };
+	  int32_t _stop() { return 0; };
+	};
+
+	int main()
+	{
+	  std::cout << "Here is my filter using settings." << std::endl;
+	  std::string fname = "../config.yml";
+  	  YAML::Node config = YAML::LoadFile(fname)["filters"][0];
+	  MyFilter filter(config);
+
+	  std::cout << "exposure (from main): "<< *filter.settingValue<double>("exposure") << std::endl;
+
+	  return 0;
+	}
+   
+   
 
 
-References
-https://codereview.stackexchange.com/questions/11841/c-tree-base-node
+Check additional info of *Settings* API here :ref:`settings_api`.
+
+.. References
+.. https://codereview.stackexchange.com/questions/11841/c-tree-base-node

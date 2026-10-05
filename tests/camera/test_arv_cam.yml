@@ -1,0 +1,33 @@
+filters:
+  - name: RGB
+    type: ArvCam
+    settings:
+      base:
+        arv_num_buffers: 40                  # number of buffers in aravis queue
+        mtu: 8228                          # network mtu
+        # mac: 70:f8:e7:b0:06:73             # warning: must be LOWER CASE
+      device:
+        PixelFormat: Mono8                   # (enumeration) mono8, mono10, mono12
+        ExposureTime: 3000                   # (float)
+        # AcquisitionFrameRateEnable: true   # (bool) 1-true / 0-false
+        # EnAcquisitionFrameRate: true       # (bool) 1-true / 0-false
+        AcquisitionFrameRate: 50             # (float)
+      header:
+        device: [ExposureTime, Gain]         # Only listed settings are copied into the header buffer
+      sink_ports:
+        - id: 0
+          length: 50
+          type: 0
+          max_readers: 5
+      source_ports:
+        - id: 0
+          batch: 1
+          blocking: true
+
+  - name: Display
+    type: GlutDisplay
+    windows:                     
+      - name: my image
+        type: Image
+        source: [0,0,data]          # [port id, item id, data or header buffer]
+        update interval: 40         # ms

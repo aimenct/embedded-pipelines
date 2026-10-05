@@ -4,7 +4,7 @@
 
 #include "core.h"
 
-using namespace ep;
+using namespace epf;
 using namespace std;
 
 // // Tests for evaluating DataNode
@@ -60,12 +60,16 @@ int test_nodes_1()
 {
   //  ObjectNode *n1 = new ObjectNode("obj1");
   ObjectNode n1("obj1");
-  ObjectNode *n2 = new ObjectNode("obj2");
-  ObjectNode *n3 = new ObjectNode("obj3");
-  DataNode *n4 = new DataNode("dn1", EP_64F, {10});
-  n1.addReference(ep::EP_HAS_CHILD, n2);
-  n2->addReference(ep::EP_HAS_CHILD, n3);
-  n3->addReference(ep::EP_HAS_CHILD, n4);
+  // ObjectNode *n2 = new ObjectNode("obj2");
+  // ObjectNode *n3 = new ObjectNode("obj3");
+  // DataNode *n4 = new DataNode("dn1", EP_64F, {10});
+  auto n2 = std::make_unique<ObjectNode>("obj2");
+  auto n3 = std::make_unique<ObjectNode>("obj3");
+  //  auto n4 = std::make_unique<DataNode>("dn1", EP_64F, {10});
+  auto n4 = std::make_unique<DataNode>("dn1", EP_64F, std::vector<size_t>{10});
+  n3->addReference(epf::EP_HAS_CHILD, std::move(n4));
+  n2->addReference(epf::EP_HAS_CHILD, std::move(n3));
+  n1.addReference(epf::EP_HAS_CHILD, std::move(n2));
 
   n1.printTree();
 
@@ -77,32 +81,50 @@ int test_nodes_1()
   return 0;
 }
 
-Message myMsg(int type)
+Message my_msg(int type)
 {
   if (type == 0) {
-    DataNode *vaca = new DataNode("vaca", EP_64F, {10}, static_cast<void *>(c));
-    DataNode *gallina = new DataNode("gallina", EP_32U, {10}, nullptr);
-    DataNode *perro = new DataNode("perro", EP_64F, {10});
-    StringNode *can = new StringNode("can", "daisy");
+    // DataNode *vaca = new DataNode("vaca", EP_64F, {10}, static_cast<void
+    // *>(c)); DataNode *gallina = new DataNode("gallina", EP_32U, {10},
+    // nullptr); DataNode *perro = new DataNode("perro", EP_64F, {10});
+    // StringNode *can = new StringNode("can", "daisy");
+
+    auto vaca = std::make_unique<DataNode>(
+        "vaca", EP_64F, std::vector<size_t>{10}, static_cast<void *>(c));
+    auto gallina = std::make_unique<DataNode>("gallina", EP_32U,
+                                              std::vector<size_t>{10}, nullptr);
+    auto perro =
+        std::make_unique<DataNode>("perro", EP_64F, std::vector<size_t>{10});
+    auto can = std::make_unique<StringNode>("can", "daisy");
+
     //      DataNode *polo = new DataNode("polo",EP_32U,{10},nullptr);
     std::string name = "granja";
 
     ObjectNode root(name);
-    root.addReference(ep::EP_HAS_CHILD, vaca);
-    root.addReference(ep::EP_HAS_CHILD, gallina);
-    root.addReference(ep::EP_HAS_CHILD, perro);
-    perro->addReference(ep::EP_HAS_CHILD, can);
-    Message msg(&root);
+    perro->addReference(epf::EP_HAS_CHILD, std::move(can));
+    root.addReference(epf::EP_HAS_CHILD, std::move(vaca));
+    root.addReference(epf::EP_HAS_CHILD, std::move(gallina));
+    root.addReference(epf::EP_HAS_CHILD, std::move(perro));
+    Message msg(root);
+
+    printf("daisy\n");
+    getchar();
 
     printf("\nmyMsg type 0\n");
     msg.print();
     printf("\n");
+
+    printf("daisy\n");
+    getchar();
+
     return msg;
   }
   if (type == 1) {
-    DataNode *polo = new DataNode("polo", EP_32U, {10}, nullptr);
+    //    DataNode *polo = new DataNode("polo", EP_32U, {10}, nullptr);
+    auto polo = std::make_unique<DataNode>("polo", EP_32U,
+                                           std::vector<size_t>{10}, nullptr);
     Message msg;
-    msg.addItem(polo);
+    msg.addItem(std::move(polo));
     printf("\nmyMsg() type 1\n");
     msg.print();
     printf("\n");
@@ -110,9 +132,9 @@ Message myMsg(int type)
   }
   if (type == 2) {
     Message msg;
-    //      DataNode raton("polo",EP_32U,{10},nullptr);
-    ObjectNode raton("raton");
-    msg.addItem(&raton);
+    //   //      DataNode raton("polo",EP_32U,{10},nullptr);
+    //   ObjectNode raton("raton");
+    //   msg.addItem(&raton);
     return msg;
   }
   Message msg;
@@ -122,24 +144,29 @@ Message myMsg(int type)
 // Tests for evaluating Message Class
 int test_msg()
 {
-  Message msg = myMsg(0);
+  Message msg = my_msg(0);
   printf("\nmyMsg type 0\n");
   msg.print();
   printf("size: %ld\n", msg.size());
   printf("\n");
+  getchar();
 
   //  Message msg1 = msg;
-  Message msg1 = myMsg(1);
+  Message msg1 = my_msg(1);
   printf("\nmyMsg type 1\n");
   msg1.print();
   printf("size: %ld\n", msg1.size());
   printf("\n");
 
-  msg1 = myMsg(0);
+  getchar();
+
+  msg1 = my_msg(0);
   printf("\nmyMsg type 0\n");
   msg1.print();
   printf("size: %ld\n", msg1.size());
   printf("\n");
+
+  getchar();
 
   // This will not work (Nodes must always be allocated in the Heap)
   // Message msg2 = myMsg(2);
@@ -151,26 +178,31 @@ int test_msg()
   return 0;
 }
 
-Message *createMessageModel()
+std::unique_ptr<Message> create_message_model()
 {
   // Create Message Model
-  Message *msg = new Message();
+  // Message *msg = new Message();
+  auto msg = std::make_unique<Message>();
 
   // item 0 - Scalar
   //  int counter = 45;
-  DataNode *counter_n = new DataNode("Counter", EP_32U, {1},
-                                     nullptr);  // value = nullptr (Queue Node)
-  msg->addItem(counter_n);
+  // DataNode *counter_n = new DataNode("Counter", EP_32U, {1},
+  //                                    nullptr);  // value = nullptr (Queue
+  //                                    Node)
+  auto counter_n =
+      std::make_unique<DataNode>("Counter", EP_32U, std::vector<size_t>{1},
+                                 nullptr);  // value = nullptr (Queue Node)
+  msg->addItem(std::move(counter_n));
 
   // item 1 - Image Object
   int width = 640;
   int height = 512;
   int channels = 4;
-  PixelFormat pixel_format = RGBa8;
+  PixelFormat pixel_format = epf::PixelFormat::RGBA8;
   ImageObject image("imagen 1", width, height, channels, pixel_format,
                     nullptr);  // data = nullptr (data_ queue node)
   //  msg->addItem( image.transferNodeTree() );
-  msg->addItem(image.copyNodeTree());
+  msg->addItem(image.copyNode());
 
   printf("Message Model (size %ld bytes)\n", msg->size());
   msg->print();
@@ -179,7 +211,7 @@ Message *createMessageModel()
   return msg;
 }
 
-void writer_function(std::shared_ptr<Queue> q)
+void writer_function(Queue *q)
 {
   printf("\n---- Writer 1 ----\n");
   unsigned int my_counter = 0;
@@ -191,13 +223,14 @@ void writer_function(std::shared_ptr<Queue> q)
   writer.dataSchema()->print();
 
   // write DataNode - item 0
-  Node2 *n = writer.dataSchema()->item(0);
+  Node *n = writer.dataSchema()->item(0);
   assert(n->isDataNode());  // ¿check if it is queued n->isQueued() ?
   DataNode *counter_n = static_cast<DataNode *>(n);  // static or dynamic cast
 
   // write ImageObject - item 1
   n = writer.dataSchema()->item(1);
-  ImageObject img_obj(n);
+  auto on = dynamic_cast<ObjectNode *>(n);
+  ImageObject img_obj(on);
 
   printf("loop \n");
   for (int i = 0; i < 5; i++) {
@@ -210,9 +243,9 @@ void writer_function(std::shared_ptr<Queue> q)
 
       // write image data
       if (i % 2)
-        memset(img_obj.data(), 5, img_obj.size());
+        memset(img_obj.data(), 5, img_obj.bufferSize());
       else
-        memset(img_obj.data(), 0, img_obj.size());
+        memset(img_obj.data(), 0, img_obj.bufferSize());
 
       printf("writer print whole message %d\n", i);
       writer.dataSchema()->print();
@@ -224,7 +257,7 @@ void writer_function(std::shared_ptr<Queue> q)
   }
 }
 
-void reader_function(std::shared_ptr<Queue> q)
+void reader_function(Queue *q)
 {
   printf("\n---- Reader 1 ----\n");
   int err = 0;
@@ -232,14 +265,15 @@ void reader_function(std::shared_ptr<Queue> q)
   QueueReader reader(q);
 
   // read DataNode - item 0
-  Node2 *n = reader.dataSchema()->item(0);
+  Node *n = reader.dataSchema()->item(0);
   assert(n->isDataNode());  // ¿check if it is queued n->isQueued() ?
   DataNode *counter_node =
       static_cast<DataNode *>(n);  // static or dynamic cast
 
   // read ImageObject - item 1
   n = reader.dataSchema()->item(1);
-  ImageObject img_obj(n);
+  auto on = dynamic_cast<ObjectNode *>(n);
+  ImageObject img_obj(on);
 
   // 2- reading loop
   for (int i = 0; i < 1; i++) {
@@ -260,7 +294,7 @@ void reader_function(std::shared_ptr<Queue> q)
   }
 }
 
-void reader_function1(std::shared_ptr<Queue> q)
+void reader_function1(Queue *q)
 {
   printf("\n---- Reader 2 ----\n");
   int err = 0;
@@ -268,14 +302,15 @@ void reader_function1(std::shared_ptr<Queue> q)
   QueueReader reader(q);
 
   // read DataNode - item 0
-  Node2 *n = reader.dataSchema()->item(0);
+  Node *n = reader.dataSchema()->item(0);
   assert(n->isDataNode());  // ¿check if it is queued n->isQueued() ?
   DataNode *counter_node =
       static_cast<DataNode *>(n);  // static or dynamic cast
 
   // read ImageObject - item 1
   n = reader.dataSchema()->item(1);
-  ImageObject img_obj(n);
+  auto on = dynamic_cast<ObjectNode *>(n);
+  ImageObject img_obj(on);
 
   // 2- reading loop
   for (int i = 0; i < 1; i++) {
@@ -302,32 +337,32 @@ int test_queue()
   /*----------------------------------*/
   /*  Create Queue                    */
   /*----------------------------------*/
-  Message *msg = createMessageModel();
+  auto msg = create_message_model();
 
   // Create Queue with Message Structure
   // Create a shared_ptr to manage the Queue
-  std::shared_ptr<Queue> q1 = std::make_shared<Queue>();
+  std::unique_ptr<Queue> q1 = std::make_unique<Queue>();
 
   int len = 10;
-  q1->init(len, msg);  // (Queue gets the ownership of the Message)
+  q1->init(len, std::move(msg));  // (Queue gets the ownership of the Message)
 
   /******************************************************/
   /* Create Writer                                      */
   /******************************************************/
-  writer_function(q1);
+  writer_function(q1.get());
 
   // /******************************************************/
   // /* Create Reader 1                                    */
   // /******************************************************/
-  reader_function(q1);
+  reader_function(q1.get());
   // /******************************************************/
   // /* Create Reader 2                                    */
   // /******************************************************/
-  reader_function1(q1);
+  reader_function1(q1.get());
 
-  /* delete queue */
-  q1->free();
-  q1 = nullptr;
+  // /* delete queue */
+  // q1->free();
+  // q1 = nullptr;
   return 0;
 }
 
@@ -337,28 +372,29 @@ int test_queue_v1()
   /*----------------------------------*/
   /*  Create Queue                    */
   /*----------------------------------*/
-  Message *msg = createMessageModel();
+  auto msg = create_message_model();
 
   // Create Queue with Message Structure
-  std::shared_ptr<Queue> q1 = std::make_shared<Queue>();
+  auto q1 = std::make_unique<Queue>();
   int len = 10;
-  q1->init(len, msg);  // (Queue gets the ownership of the Message)
+  q1->init(len, std::move(msg));  // (Queue gets the ownership of the Message)
 
   printf("\n---- Writer 1 ----\n");
   unsigned int my_counter = 0;
   int err = 0;
 
-  QueueWriter writer(q1);
+  QueueWriter writer(q1.get());
 
-  QueueReader reader(q1);
+  QueueReader reader(q1.get());
 
   // write DataNode - item 0
-  Node2 *n = writer.dataSchema()->item(0);
+  Node *n = writer.dataSchema()->item(0);
   assert(n->isDataNode());  // ¿check if it is queued n->isQueued() ?
   DataNode *counter_n = static_cast<DataNode *>(n);  // static or dynamic cast
   // write ImageObject - item 1
   n = writer.dataSchema()->item(1);
-  ImageObject img_obj(n);
+  auto on = dynamic_cast<ObjectNode *>(n);
+  ImageObject img_obj(on);
 
   // read DataNode - item 0
   n = reader.dataSchema()->item(0);
@@ -368,7 +404,8 @@ int test_queue_v1()
 
   // read ImageObject - item 1
   n = reader.dataSchema()->item(1);
-  ImageObject img_obj_r(n);
+  on = dynamic_cast<ObjectNode *>(n);
+  ImageObject img_obj_r(on);
 
   printf("loop \n");
   for (int i = 0; i < 20; i++) {
@@ -382,9 +419,9 @@ int test_queue_v1()
       my_counter++;
       // write image data
       if (i % 2)
-        memset(img_obj.data(), 5, img_obj.size());
+        memset(img_obj.data(), 5, img_obj.bufferSize());
       else
-        memset(img_obj.data(), 0, img_obj.size());
+        memset(img_obj.data(), 0, img_obj.bufferSize());
 
       printf("writer print whole message %d\n", i);
       writer.dataSchema()->print();
@@ -409,16 +446,16 @@ int test_queue_v1()
   }
 
   /* delete queue */
-  q1->free();
-  q1 = nullptr;
+  // q1->free();
+  // q1 = nullptr;
   return 0;
 }
 
 class TestReader {
   public:
-    QueueReader *r;
-    char *data;
-    char *hdr;
+    QueueReader reader;
+    std::unique_ptr<char[]> data;
+    std::unique_ptr<char[]> hdr;
     Message *dataMsg;
     Message *hdrMsg;
     int byte_count;
@@ -426,63 +463,63 @@ class TestReader {
     size_t msg_size;
     size_t hdr_size;
     int batch;
-    int newPerBatch;
+    int new_per_batch;
 
   public:
     //    TestReader(Queue *q, int msgs, bool blocking)
-    TestReader(std::shared_ptr<Queue> q, int msgs, bool blocking)
+    TestReader(Queue *q, int msgs, bool blocking)
+        : reader(q)
     {
       num_msgs = msgs;
-      r = new QueueReader(q);
-      msg_size = r->dataSchema()->size();
-      hdr_size = r->hdrSchema()->size();
-      r->setBlockingCalls(blocking);
-      data = new char[msg_size * num_msgs];
-      hdr = new char[hdr_size * num_msgs];
+      msg_size = static_cast<int>(reader.dataSchema()->size());
+      hdr_size = static_cast<int>(reader.hdrSchema()->size());
+      reader.setBlockingCalls(blocking);
+      data = std::make_unique<char[]>(msg_size * num_msgs);
+      hdr = std::make_unique<char[]>(hdr_size * num_msgs);
       byte_count = 0;
       batch = 1;
-      newPerBatch = 1;
+      new_per_batch = 1;
     }
 
-    ~TestReader()
-    {
-      //      r->unsubscribe();
-      delete r;
-      delete[] data;
-      delete[] hdr;
-    }
+    // ~TestReader()
+    // {
+    //   //      r->unsubscribe();
+    //   // delete r;
+    //   delete[] data;
+    //   delete[] hdr;
+    // }
 
     int read()
     {
-      int err = r->startRead();
+      int err = reader.startRead();
       if (err >= 0) {
-        memcpy(&data[byte_count], r->dataPtrA(), msg_size);
+        memcpy(&data[byte_count], reader.dataPtrA(), msg_size);
         byte_count += static_cast<int>(msg_size);
-        r->endRead();
+        reader.endRead();
       }
       return err;
     }
 
     int read(int batchSize_, int newPerBatch_)
     {
-      int err = r->startRead(batchSize_, newPerBatch_);
+      int err = reader.startRead(batchSize_, newPerBatch_);
       if (err >= 0) {
-        memcpy(&data[byte_count], r->dataPtrA(), msg_size * r->lenA());
-        byte_count += static_cast<int>(msg_size * r->lenA());
-        memcpy(&data[byte_count], r->dataPtrB(), msg_size * r->lenB());
-        byte_count += static_cast<int>(msg_size * r->lenB());
+        memcpy(&data[byte_count], reader.dataPtrA(), msg_size * reader.lenA());
+        byte_count += static_cast<int>(msg_size * reader.lenA());
+        memcpy(&data[byte_count], reader.dataPtrB(), msg_size * reader.lenB());
+        byte_count += static_cast<int>(msg_size * reader.lenB());
         // r->dataMsg(0).print();
-        r->endRead();
+        reader.endRead();
       }
       return err;
     }
     char *getData()
     {
-      return data;
+      return data.get();
     }
     char *getHdr()
     {
-      return hdr;
+      return hdr.get();
     }
     int getBatch()
     {
@@ -490,15 +527,15 @@ class TestReader {
     }
     int getNewPerBatch()
     {
-      return newPerBatch;
+      return new_per_batch;
     }
 };
 
 class TestWriter {
   public:
-    QueueWriter *w;
-    char *data;
-    char *hdr;
+    QueueWriter writer;
+    std::unique_ptr<char[]> data;
+    std::unique_ptr<char[]> hdr;
     Message *dataMsg;
     Message *hdrMsg;
     long int byte_count;
@@ -508,26 +545,25 @@ class TestWriter {
     int batch;
 
   public:
-    TestWriter(std::shared_ptr<Queue> q, int msgs, bool blocking)
+    TestWriter(Queue *q, int msgs, bool blocking)
+        : writer(q)
     {
       num_msgs = msgs;
-      w = new QueueWriter(q);
-      msg_size = w->dataSchema()->size();
-      hdr_size = w->hdrSchema()->size();
-      w->setBlockingCalls(blocking);
-      data = new char[msg_size * num_msgs];
-      hdr = new char[hdr_size * num_msgs];
+      msg_size = writer.dataSchema()->size();
+      hdr_size = writer.hdrSchema()->size();
+      writer.setBlockingCalls(blocking);
+      data = std::make_unique<char[]>(msg_size * num_msgs);
+      hdr = std::make_unique<char[]>(hdr_size * num_msgs);
       byte_count = 0;
       batch = 1;
       generateData();
     }
-    ~TestWriter()
-    {
-      // w->unsubscribe();
-      delete w;
-      delete[] data;
-      delete[] hdr;
-    }
+    // ~TestWriter()
+    // {
+    //   // w->unsubscribe();
+    //   delete[] data;
+    //   delete[] hdr;
+    // }
 
     void generateData()
     {
@@ -550,13 +586,13 @@ class TestWriter {
       // std::cout << "write \n";
       // getchar();
 
-      int err = w->startWrite();
+      int err = writer.startWrite();
       if (err >= 0) {
-        memcpy(w->dataPtrA(), &data[byte_count], msg_size);
+        memcpy(writer.dataPtrA(), &data[byte_count], msg_size);
         // w->dataMsg(0).print();
         // getchar();
         byte_count += msg_size;
-        w->endWrite();
+        writer.endWrite();
       }
       return err;
     }
@@ -566,25 +602,25 @@ class TestWriter {
       // std::cout << "write \n";
       // getchar();
 
-      int err = w->startWrite(batchSize_);
+      int err = writer.startWrite(batchSize_);
       if (err >= 0) {
-        memcpy(w->dataPtrA(), &data[byte_count], msg_size * w->lenA());
-        byte_count += msg_size * w->lenA();
-        memcpy(w->dataPtrB(), &data[byte_count], msg_size * w->lenB());
-        byte_count += msg_size * w->lenB();
+        memcpy(writer.dataPtrA(), &data[byte_count], msg_size * writer.lenA());
+        byte_count += msg_size * writer.lenA();
+        memcpy(writer.dataPtrB(), &data[byte_count], msg_size * writer.lenB());
+        byte_count += msg_size * writer.lenB();
         //        w->dataMsg(0).print();
         //        getchar();
-        w->endWrite();
+        writer.endWrite();
       }
       return err;
     }
     char *getData()
     {
-      return data;
+      return data.get();
     }
     char *getHdr()
     {
-      return hdr;
+      return hdr.get();
     }
     int getBatch()
     {
@@ -597,14 +633,14 @@ int test_queue_v2()
   /*----------------------------------*/
   /*  Create Queue                    */
   /*----------------------------------*/
-  Message *msg = createMessageModel();
+  auto msg = create_message_model();
 
   // Create Queue with Message Structure
   // Create a shared_ptr to manage the Queue
-  std::shared_ptr<Queue> q1 = std::make_shared<Queue>();
+  auto q1 = std::make_unique<Queue>();
   int len = 10;
-  q1->init(len, msg);  // (Queue gets the ownership of the Message)
-  q1->setQueueType(lifo);
+  q1->init(len, std::move(msg));  // (Queue gets the ownership of the Message)
+  q1->setType(lifo);
   // max consumers
 
   /******************************************************/
@@ -613,9 +649,9 @@ int test_queue_v2()
   int num_msgs = 500;
   bool blocking = true;
 
-  TestWriter tw(q1, num_msgs, blocking);
-  TestReader tr(q1, num_msgs, blocking);
-  TestReader tr1(q1, num_msgs, blocking);
+  TestWriter tw(q1.get(), num_msgs, blocking);
+  TestReader tr(q1.get(), num_msgs, blocking);
+  TestReader tr1(q1.get(), num_msgs, blocking);
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < num_msgs; i++) {
@@ -648,9 +684,9 @@ int test_queue_v2()
   else
     std::cout << "Test - Not Passed " << std::endl;
 
-  /* delete queue */
-  q1->free();
-  q1 = nullptr;
+  // /* delete queue */
+  // q1->free();
+  // q1 = nullptr;
   return 0;
 }
 
@@ -659,14 +695,14 @@ int test_queue_v3()
   /*----------------------------------*/
   /*  Create Queue                    */
   /*----------------------------------*/
-  Message *msg = createMessageModel();
+  auto msg = create_message_model();
 
   // Create Queue with Message Structure
   // Create a shared_ptr to manage the Queue
-  std::shared_ptr<Queue> q1 = std::make_shared<Queue>();
+  auto q1 = std::make_unique<Queue>();
   int len = 10;
-  q1->init(len, msg);  // (Queue gets the ownership of the Message)
-  q1->setQueueType(lifo);
+  q1->init(len, std::move(msg));  // (Queue gets the ownership of the Message)
+  q1->setType(lifo);
   // max consumers
 
   /******************************************************/
@@ -675,9 +711,9 @@ int test_queue_v3()
   int num_msgs = 500;
   bool blocking = true;
 
-  TestWriter tw(q1, num_msgs, blocking);
-  TestReader tr(q1, num_msgs, blocking);
-  TestReader tr1(q1, num_msgs, blocking);
+  TestWriter tw(q1.get(), num_msgs, blocking);
+  TestReader tr(q1.get(), num_msgs, blocking);
+  TestReader tr1(q1.get(), num_msgs, blocking);
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < num_msgs / 2; i++) {
@@ -698,7 +734,6 @@ int test_queue_v3()
   if (memcmp(tw.getData(), tr.getData(), size) != 0) {
     std::cout << "Error: writer data differs from reader data" << std::endl;
     err = -1;
-    ;
   }
 
   if (memcmp(tw.getData(), tr1.getData(), size) != 0) {
@@ -712,15 +747,15 @@ int test_queue_v3()
     std::cout << "Test - Not Passed " << std::endl;
 
   /* delete queue */
-  q1->free();
-  q1 = nullptr;
+  // q1->free();
+  // q1 = nullptr;
   return 0;
 }
 
 /////////////////////////  TEST QUEUE V4 ///////////////////////
 bool flag = false;
 
-void *TWfun(void *f)
+void *test_writer_function_1(void *f)
 {
   TestWriter *w = reinterpret_cast<TestWriter *>(f);
   for (int i = 0; i < w->num_msgs / w->getBatch(); i++) {
@@ -732,7 +767,7 @@ void *TWfun(void *f)
   pthread_exit(NULL);  // Correctly specify NULL as the exit status
 }
 
-void *TRfun(void *f)
+void *test_reader_function_1(void *f)
 {
   TestReader *r = reinterpret_cast<TestReader *>(f);
   for (int i = 0; i < r->num_msgs / r->getBatch(); i++) {
@@ -742,8 +777,8 @@ void *TRfun(void *f)
   printf("TRfun exit\n");
 
   flag = true;
-  r->r->queue()->setWriteBlocking(0, 0);
-  r->r->queue()->wakeUpProducers();
+  r->reader.queue()->setWriteBlocking(0, 0);
+  r->reader.queue()->wakeUpProducers();
 
   pthread_exit(NULL);
 }
@@ -753,18 +788,18 @@ int test_queue_v4()
   /*----------------------------------*/
   /*  Create Queue                    */
   /*----------------------------------*/
-  Message *msg = createMessageModel();
+  auto msg = create_message_model();
 
   // Create Queue with Message Structure
   // Create a shared_ptr to manage the Queue
-  std::shared_ptr<Queue> q1 = std::make_shared<Queue>();
+  auto q1 = std::make_unique<Queue>();
   int len = 10;
 
-  int er = q1->setQueueType(fifo);
+  int er = q1->setType(fifo);
   if (er) {
     printf("setting fifo error\n");
   }
-  q1->init(len, msg);  // (Queue gets the ownership of the Message)
+  q1->init(len, std::move(msg));  // (Queue gets the ownership of the Message)
 
   // max consumers
 
@@ -774,27 +809,27 @@ int test_queue_v4()
   int num_msgs = 50;
   bool blocking = true;
 
-  TestWriter tw(q1, 2 * num_msgs, blocking);
-  TestReader tr(q1, num_msgs, blocking);
+  TestWriter tw(q1.get(), 2 * num_msgs, blocking);
+  TestReader tr(q1.get(), num_msgs, blocking);
   tr.batch = 5;
-  tr.newPerBatch = 5;
-  TestReader tr1(q1, num_msgs, blocking);
+  tr.new_per_batch = 5;
+  TestReader tr1(q1.get(), num_msgs, blocking);
   tr1.batch = 1;
-  tr1.newPerBatch = 1;
+  tr1.new_per_batch = 1;
 
   auto start = std::chrono::high_resolution_clock::now();
 
   // Create a pthread
   pthread_t thread[3];
 
-  if (pthread_create(&thread[0], NULL, TWfun, &tw) != 0) {
+  if (pthread_create(&thread[0], NULL, test_writer_function_1, &tw) != 0) {
     std::cerr << "Error creating thread" << std::endl;
   }
 
-  if (pthread_create(&thread[1], NULL, TRfun, &tr) != 0) {
+  if (pthread_create(&thread[1], NULL, test_reader_function_1, &tr) != 0) {
     std::cerr << "Error creating thread" << std::endl;
   }
-  if (pthread_create(&thread[2], NULL, TRfun, &tr1) != 0) {
+  if (pthread_create(&thread[2], NULL, test_reader_function_1, &tr1) != 0) {
     std::cerr << "Error creating thread" << std::endl;
   }
 
@@ -851,15 +886,15 @@ int test_queue_v4()
   // std::cout << endl;
 
   /* delete queue */
-  q1->free();
-  q1 = nullptr;
+  // q1->free();
+  // q1 = nullptr;
   return 0;
 }
 
 /////////////////////////  TEST QUEUE V5 ///////////////////////
 bool flag1 = false;
 
-void *TWfun1(void *f)
+void *test_writer_function_2(void *f)
 {
   TestWriter *w = reinterpret_cast<TestWriter *>(f);
   for (int i = 0; i < w->num_msgs / w->getBatch(); i++) {
@@ -868,15 +903,15 @@ void *TWfun1(void *f)
   }
 
   flag1 = true;
-  w->w->queue()->setReadBlocking(0, 0);
-  w->w->queue()->setReadBlocking(1, 0);
-  w->w->queue()->wakeUpProducers();
+  w->writer.queue()->setReadBlocking(0, 0);
+  w->writer.queue()->setReadBlocking(1, 0);
+  w->writer.queue()->wakeUpProducers();
 
   std::cout << "TWfun exit" << std::endl;
   pthread_exit(NULL);  // Correctly specify NULL as the exit status
 }
 
-void *TRfun1(void *f)
+void *test_reader_function_2(void *f)
 {
   TestReader *r = reinterpret_cast<TestReader *>(f);
   for (int i = 0; i < r->num_msgs / r->getBatch(); i++) {
@@ -893,18 +928,18 @@ int test_queue_v5()
   /*----------------------------------*/
   /*  Create Queue                    */
   /*----------------------------------*/
-  Message *msg = createMessageModel();
+  auto msg = create_message_model();
 
   // Create Queue with Message Structure
   // Create a shared_ptr to manage the Queue
-  std::shared_ptr<Queue> q1 = std::make_shared<Queue>();
+  auto q1 = std::make_unique<Queue>();
   int len = 10;
 
-  int er = q1->setQueueType(lifo);
+  int er = q1->setType(lifo);
   if (er) {
     printf("setting fifo error\n");
   }
-  q1->init(len, msg);  // (Queue gets the ownership of the Message)
+  q1->init(len, std::move(msg));  // (Queue gets the ownership of the Message)
 
   // max consumers
 
@@ -914,28 +949,28 @@ int test_queue_v5()
   int num_msgs = 50;
   bool blocking = true;
 
-  TestWriter tw(q1, 2 * num_msgs, blocking);
+  TestWriter tw(q1.get(), 2 * num_msgs, blocking);
   tw.batch = 3;
-  TestReader tr(q1, 4 * num_msgs, blocking);
+  TestReader tr(q1.get(), 4 * num_msgs, blocking);
   tr.batch = 5;
-  tr.newPerBatch = 5;
-  TestReader tr1(q1, 4 * num_msgs, blocking);
+  tr.new_per_batch = 5;
+  TestReader tr1(q1.get(), 4 * num_msgs, blocking);
   tr1.batch = 2;
-  tr1.newPerBatch = 2;
+  tr1.new_per_batch = 2;
 
   auto start = std::chrono::high_resolution_clock::now();
 
   // Create a pthread
   pthread_t thread[3];
 
-  if (pthread_create(&thread[0], NULL, TWfun1, &tw) != 0) {
+  if (pthread_create(&thread[0], NULL, test_writer_function_2, &tw) != 0) {
     std::cerr << "Error creating thread" << std::endl;
   }
 
-  if (pthread_create(&thread[1], NULL, TRfun1, &tr) != 0) {
+  if (pthread_create(&thread[1], NULL, test_reader_function_2, &tr) != 0) {
     std::cerr << "Error creating thread" << std::endl;
   }
-  if (pthread_create(&thread[2], NULL, TRfun1, &tr1) != 0) {
+  if (pthread_create(&thread[2], NULL, test_reader_function_2, &tr1) != 0) {
     std::cerr << "Error creating thread" << std::endl;
   }
 
@@ -992,8 +1027,8 @@ int test_queue_v5()
   std::cout << endl;
 
   /* delete queue */
-  q1->free();
-  q1 = nullptr;
+  // q1->free();
+  // q1 = nullptr;
   return 0;
 }
 
@@ -1009,7 +1044,3 @@ int main()
   test_queue_v4();
   return 0;
 }
-
-
-
-

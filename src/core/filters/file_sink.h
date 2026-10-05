@@ -13,29 +13,28 @@
 #include <string>
 #include <vector>
 
-#include "core.h"
+#include "../libs/filter.h"
+#include "../libs/serialization.h"
 
-namespace ep {
+namespace epf {
 
 struct FileData;
 
 class FileSink : public Filter {
   public:
-    FileSink(const YAML::Node &config);  
-    ~FileSink();                         
+    FileSink(const YAML::Node &config);
+    ~FileSink();
 
   protected:
     int _job();
-    int _open();   
-    int _close();  
-    int _set();    
-    int _reset();  
-    int _start();  
-    int _stop();   
+    int _open();
+    int _close();
+    int _set();
+    int _reset();
+    int _start();
+    int _stop();
 
   private:
-    YAML::Node yaml_config_;
-
     // Settings
     uint32_t timeout_;
     std::string folder_path_;
@@ -48,6 +47,7 @@ class FileSink : public Filter {
     int closeFile(FileData &f);
     int openFiles();
     int closeFiles();
+    int ensureOutputDirectory() const;
 };
 
 struct FileData {
@@ -69,6 +69,6 @@ struct FileData {
     {
     }
 };
-}  // namespace ep
+}  // namespace epf
 
 #endif  // FILESINK_H

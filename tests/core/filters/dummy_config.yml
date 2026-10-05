@@ -1,0 +1,28 @@
+name: my_device
+type: DummyFilter
+settings:
+  base:
+    timeout: 10
+    counter_init: 2
+    metadata: "Fancy device."
+  device:
+    dummy_setting: 10
+    dummy_offset: 5
+  sink_ports:
+    - id: 0
+      length: 8
+      queue_type: fifo
+      max_readers: 5
+      max_writers: 3
+      batch_size: 10
+      blocking: false
+      timestamp: true
+  source_ports:
+    - id: 0
+      message_window: 10
+      message_stride: 5
+      blocking: true
+    - id: 4
+      message_window: 10
+      message_stride: 5
+      blocking: true

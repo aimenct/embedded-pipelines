@@ -1,0 +1,29 @@
+services:
+  edge:
+    volumes:
+      
+      # Neovim binary distribution from host
+      - ${HOME}/.local/share/nvim-linux-x86_64:/home/ubuntu/.local/share/nvim-linux-x86_64:ro
+
+      # Neovim config/state/data/cache from host
+      - ${HOME}/.config/nvim:/home/ubuntu/.config/nvim
+      - ${HOME}/.local/share/nvim:/home/ubuntu/.local/share/nvim
+      - ${HOME}/.local/state/nvim:/home/ubuntu/.local/state/nvim
+      - ${HOME}/.cache/nvim:/home/ubuntu/.cache/nvim
+
+      # Codex from host, if you want same login/config
+      - ${HOME}/.codex:/home/ubuntu/.codex
+      - ${HOME}/.local/bin/codex:/usr/local/bin/codex
+
+      - ${HOME}/.claude:/home/ubuntu/.claude
+      - ${HOME}/.local/bin/claude:/usr/local/bin/claude
+
+      - ${HOME}/.claude.json:/home/ubuntu/.claude.json
+
+      # bashrc from host, if you want same bash config
+      - ${HOME}/.bashrc:/home/ubuntu/.bashrc
+
+    environment:
+      TERM: xterm-256color
+      COLORTERM: truecolor
+

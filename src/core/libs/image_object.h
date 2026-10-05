@@ -5,65 +5,157 @@
 #ifndef IMAGE_OBJECT_H
 #define IMAGE_OBJECT_H
 
-#include "image_utils.h"
+#include "image_formats.h"
 #include "node.h"
 
-namespace ep {
+namespace epf {
 
-// Images in EP are represented as objects (NodeTrees):
-// Name: Object Node
-// - Width: DataNode ( int32_t )
-// - Height: DataNode ( int32_t )
-// - Channels: DataNode ( int32_t )
-// - PixelFormat: DataNode ( int32_t / enum  )
-// - data: DataNode ( unsigned char array )
+// Image object as node tree:
+// ObjectNode “Image”
+//  ├─ DataNode “width”         (int32_t)
+//  ├─ DataNode “height”        (int32_t)
+//  ├─ DataNode “channels”      (int32_t)
+//  ├─ DataNode “pixelFormat”   (int32_t ← PixelFormat enum)
+//  └─ DataNode “data”          (unsigned char [] ←
+//  width*height*channels*bytesPerPixel)
+
+// ObjectNode “Image”
+//  ├─ DataNode “width”         (int32_t)
+//  ├─ DataNode “height”        (int32_t)
+//  ├─ DataNode “channels”      (int32_t)
+//  ├─ DataNode “imageEncoding” (int32_t ← ImageEncoding enum)
+//  ├─ DataNode “size”          (int64_t ← encoded size)
+//  └─ DataNode “data”          (unsigned char[])
+
+// Examples:
+
+// ObjectNode “Image”:
+//   width:         1280            # DataNode<int32_t>
+//   height:        720             # DataNode<int32_t>
+//   channels:      1               # DataNode<int32_t>
+//   pixelFormat:   Mono10          # DataNode<int32_t> (PixelFormat::Mono10)
+//   imageEncoding: Bitstream       # DataNode<int32_t>
+//   (ImageEncoding::Bitstream) data:           <byte[?]>      #
+//   DataNode<unsigned char[]> # size should be: 1280*720*2 bytes (Mono10 packed
+//   to 16‐bit words)
+
+// ObjectNode “Image”:
+//  width:         640
+//  height:        480
+//  channels:      3
+//  pixelFormat:   RGB8            # the decoded pixel format, even though the
+//  file is compressed imageEncoding: JPEG            # DataNode<int32_t>
+//  (ImageEncoding::JPEG) data:           <jpeg_bytes>   # the full JPEG file
+//  payload
+
+// ObjectNode “Image”:
+//  width:         1920
+//  height:        1080
+//  channels:      3
+//  pixelFormat:   YUV420p        # chroma‐subsampled 4:2:0 planar
+//  imageEncoding: H264           # DataNode<int32_t> (ImageEncoding::H264)
+//  data:           <h264_nal>     # one or more NALUs (bitstream)
 
 class ImageObject {
   private:
-    ep::ObjectNode *root_node_;  // pointer
-    char node_tree_mem_mgmt_;
+    // --- Node ownership ---
+    std::unique_ptr<ObjectNode> owned_root_;  // if we own it
+    ObjectNode *raw_root_{};  // if we reference an external node
+    bool owns_node_{false};
 
-    int32_t *width_;
-    int32_t *height_;
-    int32_t *channels_;
-    PixelFormat *pixel_format_;
-    DataNode *data_node_;
-    size_t size_;
+    // --- Pointers into the tree ---
+    DataNode *width_node_{};         // int32
+    DataNode *height_node_{};        // int32
+    DataNode *channels_node_{};      // int32
+    DataNode *pixel_format_node_{};  // int32 ← PixelFormat
+    DataNode *data_node_{};          // byte[]
+
+    // --- Cached values ---
+    // Avoid cached copies of node data. All values are read directly from the
+    // underlying DataNodes when required.
+
+    void update_variables();  // initialize node pointers and validate sizes
 
   public:
-    ImageObject(){};
-    ImageObject(ep::Node2 *node);
-    ImageObject(std::string name, int32_t width, int32_t height,
-                int32_t channels, PixelFormat pixel_format, uint8_t *data);
+    // --- ctors/dtors ---
+    ImageObject();                                    // makes an empty tree
+    explicit ImageObject(ObjectNode *external_root);  // todo Node
+    ImageObject(const std::string &name, int32_t width, int32_t height,
+                int32_t channels, PixelFormat pf);
+    ImageObject(const std::string &name, int32_t width, int32_t height,
+                int32_t channels, PixelFormat pf, uint8_t *prealloc_data);
+
+    ImageObject(const ImageObject &other);
+    ImageObject &operator=(const ImageObject &other);
+
+    ImageObject(ImageObject &&) noexcept;
+    ImageObject &operator=(ImageObject &&) noexcept;
+
     ~ImageObject();
 
-    /* Generate node tree */
-    ObjectNode *transferNodeTree();
+    // --- Tree export ---
+    std::unique_ptr<ObjectNode> moveNode();
+    std::unique_ptr<ObjectNode> copyNode() const;
 
-    ObjectNode *copyNodeTree();
+    // --- Accessors ---
+    int32_t width() const
+    {
+      return *static_cast<int32_t *>(width_node_->value());
+    }
+    int32_t height() const
+    {
+      return *static_cast<int32_t *>(height_node_->value());
+    }
+    int32_t channels() const
+    {
+      return *static_cast<int32_t *>(channels_node_->value());
+    }
+    PixelFormat pixelFormat() const
+    {
+      return *static_cast<PixelFormat *>(pixel_format_node_->value());
+    }
+    void *data() const
+    {
+      return data_node_->value();
+    }
+    float bytesPerPixel() const
+    {
+      auto info = get_image_info(pixelFormat(), width(), height(), channels());
+      return info.bytesPerPixel;
+    }
+    size_t bufferSize() const
+    {
+      auto info = get_image_info(pixelFormat(), width(), height(), channels());
+      return info.size;
+    }
+    BaseType baseType() const
+    {
+      auto info = get_image_info(pixelFormat(), width(), height(), channels());
+      return info.baseType;
+    }
 
-    /* Get width */
-    int32_t width() const;
-
-    /* Get heigth */
-    int32_t height() const;
-
-    /* Get heigth */
-    int32_t channels() const;
-
-    /* Get pixelFormat */
-    PixelFormat pixelFormat() const;
-
-    /* Get data */
-    void *data() const;
-
-    /* bytesPerPixel */
-    float bytesPerPixel() const;
-
-    /* size */
-    size_t size() const;
+    DataNode *widthNode() const
+    {
+      return width_node_;
+    }
+    DataNode *heightNode() const
+    {
+      return height_node_;
+    }
+    DataNode *channelsNode() const
+    {
+      return channels_node_;
+    }
+    DataNode *pixelFormatNode() const
+    {
+      return pixel_format_node_;
+    }
+    DataNode *dataNode() const
+    {
+      return data_node_;
+    }
 };
 
-}  // namespace ep
+}  // namespace epf
 
 #endif  // IMAGE_OBJECT_H

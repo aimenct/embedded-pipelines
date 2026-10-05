@@ -1,0 +1,42 @@
+filters:
+   - name: RGB
+     type: ArvCam
+     settings:
+        base:
+           push_mode: y                         # select: 'y' push mode, 'n' pull mode
+           queue_length: 5                      # sink queue length
+           arv_num_buffers: 20                  # number of buffers in aravis queue
+           output_interleave: 1                 # output interleave. See epf_types.h, BSQ by defect
+           output_color: 1
+           output_bands: 1
+           # mtu: 8228                            # network mtu
+           # mac: 70:f8:e7:b0:06:73             # warning: must be LOWER CASE
+        device:
+           PixelFormat: Mono8                   # (enumeration) mono8, mono10, mono12
+           ExposureTime: 3000                   # (float)
+           Width:                               # (null value)
+           Height:                              # (null value)
+           OffsetY:                             # (null value)
+           # AcquisitionFrameRateEnable: true   # (bool) 1-true / 0-false
+           EnAcquisitionFrameRate: true         # (bool) 1-true / 0-false
+           AcquisitionFrameRate: 30            # (float)
+
+   - name: Display
+     type: Display
+     settings:
+        base:
+           enable normalization: y
+           selected band: 0          # sink queue length
+
+   - name: Sink
+     type: FileSink
+     settings:
+        base:
+           timeout: 0
+           path: ../data/out/
+           extension: raw
+           switch frequency: M
+
+main settings:
+  enable display: y
+  enable sink: n

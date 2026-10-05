@@ -68,8 +68,10 @@ Objects represent complex data structures as node trees. The default object is a
      - **Description**
    * - EP_OBJ (0)
      - Generic category for objects that do not fit into more specific ones.
-   * - EP_IMAGE_OBJ (1)
-     - Image object that handle image data.
+   * - EP_IMAGE_RAW (1)
+     - Raw image object that handle uncompressed image data.
+   * - EP_IMAGE_COMPRESSED (2)
+     - Compressed image object storing encoded data.
 
 Represents a general object type. This is a default or base object type serving as a generic category for objects that do not fit into more specific categories.
 distinguishing them from other types of data objects within the framework.
@@ -82,10 +84,22 @@ Image Object
   .. code-block:: text
 
    ObjectNode <Image, name>
-		  hasChild   DataNode <width>
-		  hasChild   DataNode <height>
-		  hasChild   DataNode <channels>
-		  hasChild   DataNode <PixelFormat>
-		  hasChild   DataNode <data>
+                  hasChild   DataNode <width>
+                  hasChild   DataNode <height>
+                  hasChild   DataNode <channels>
+                  hasChild   DataNode <PixelFormat>
+                  hasChild   DataNode <data>
+
+Compressed Image Object
+^^^^^^^^^^^^^^^^^^^^^^
+- **CompressedImageObject**: Stores encoded image data without decoding it.
+  Its node tree representation is:
+
+  .. code-block:: text
+
+   ObjectNode <Image, name>
+                  hasChild   DataNode <size>
+		  hasChild   DataNode <imageEncoding>
+                  hasChild   DataNode <data>
 
 .. https://reference.opcfoundation.org/Core/Part3/v104/docs/A.4.3

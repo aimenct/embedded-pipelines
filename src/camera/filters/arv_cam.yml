@@ -1,0 +1,42 @@
+# ArvCam full pipeline configuration template.
+# Copy/paste this block into your config.yml.
+
+filters:
+  - name: Camera                     # Friendly filter instance name
+    type: ArvCam                     # Filter class type
+    settings:
+      base:
+        # ---- ArvCam built-in filter settings ----
+        trigger_mode: continuous     # continuous | software
+        arv_num_buffers: 20          # Number of Aravis stream buffers
+        mtu: 1500                    # GVSP packet size (network MTU)
+        mac: ""                     # Optional camera selector (ID/MAC/serial)
+        packet_timeout: 20           # Packet timeout in milliseconds
+
+      device:
+        # ---- GenICam device settings (camera dependent) ----
+        # Any valid GenICam feature can be set here.
+        PixelFormat: Mono8           # Pixel format enumeration
+        ExposureTime: 3000           # Exposure in microseconds
+        AcquisitionFrameRateEnable: true
+        AcquisitionFrameRate: 30
+        Gain: 0
+        Width: 0                     # 0 -> use camera/default or current value
+        Height: 0
+        OffsetX: 0
+        OffsetY: 0
+
+      header:
+        # Device settings copied into per-frame header metadata.
+        device: [ExposureTime, Gain, AcquisitionFrameRate]
+
+      sink_ports:
+        # ArvCam is Filter(config, 0, 1): output is produced on sink port 0.
+        "0":
+          length: 50                 # Queue capacity (messages)
+          max_readers: 5             # Max consumers attached to this queue
+          max_writers: 1             # Usually 1 writer per filter output
+          queue_type: 0              # Queue type enum (framework-defined)
+          batch_size: 1              # Elements written per write cycle
+          blocking: true             # Block when queue is full
+          timestamp: false           # Auto timestamp write operations

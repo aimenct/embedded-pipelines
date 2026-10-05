@@ -4,39 +4,57 @@
 
 #include "settings.h"
 
-using namespace ep;
+#include <algorithm>
 
-Settings2::Settings2(std::string filter_name)
+using namespace epf;
+
+std::string setting_simple_name(std::string_view complete_path)
+{
+  auto pos = complete_path.rfind('.');
+  if (pos == std::string_view::npos) {
+    return std::string(complete_path);
+  }
+  return std::string(complete_path.substr(pos + 1));
+}
+
+Settings::Settings(std::string filter_name)
     : NodeTree(filter_name)
 {
-  for (std::string name : folder_name_) {
-    ObjectNode *object_node = new ObjectNode(name, 0);
+  for (int i = BASE_SETTING; i < SETTING_TYPE_COUNT; ++i) {
+    SettingType type = static_cast<SettingType>(i);
+    auto object_node =
+        std::make_unique<ObjectNode>(settingtype_to_string(type), 0);
 
-    // Add folders for filter and device settings to the node tree and
-    // node map.
-    add(object_node, ep::EP_HAS_CHILD);
-    setting_map_.emplace(object_node->name(), object_node);
+    // Save raw pointer before moving ownership
+    Node *node_ptr = object_node.get();
+    std::string node_name = object_node->name();
+
+    // Transfer ownership to add()
+    add(std::move(object_node), epf::EP_HAS_CHILD);
+
+    // Store raw pointer in the map
+    setting_map_.emplace(node_name, node_ptr);
   }
 }
 
-Settings2::Settings2(const Settings2 &obj)
+Settings::Settings(const Settings &obj)
     : NodeTree(obj)
 {
   *this = obj;
 }
 
-const Settings2 &Settings2::operator=(const Settings2 &obj)
+const Settings &Settings::operator=(const Settings &obj)
 {
   NodeTree::operator=(obj);
 
-  for (ep::Node2 *node : node_list_) {
+  for (epf::Node *node : node_list_) {
     setting_map_.emplace(node->name(), node);
   }
 
   return *this;
 }
 
-const Node2 *Settings2::operator[](std::string name) const
+const Node *Settings::operator[](std::string name) const
 {
   // Look for the setting name in the setting_map_
   auto iterator = setting_map_.find(name);
@@ -49,212 +67,252 @@ const Node2 *Settings2::operator[](std::string name) const
   return nullptr;
 }
 
-void Settings2::setFilterName(std::string name)
+int32_t Settings::settingIndex(std::string key_name) const
 {
-  // Look for the setting name in the setting_map_
-  Node2 *root = NodeTree::operator[](0);
-
-  root->setName(name);
-
-  return;
+  auto it = setting_map_.find(key_name);
+  if (it == setting_map_.end()) {
+    std::cout << "keyname: " << key_name << " not found." << std::endl;
+    return -1;
+  }
+  return nodeIndex(it->second);
 }
 
-int32_t Settings2::addSetting(std::string name, void *value,
-                              ep::BaseType data_type, SettingType setting_type,
-                              std::string tooltip, AccessType accessmode)
+bool Settings::settingExists(std::string key_name) const
 {
-  // Check wether it should be added to the filter or device node tree.
-  int32_t parent_node = 1;
+  try {
+    setting_map_.at(key_name);
+    return true;
+  }
+  catch (const std::out_of_range &e) {
+    return false;
+  }
+}
 
-  // Device settings are memory managed by the NodeTree
-  bool mem_managed = true;
+std::string Settings::retrieveKeyName(Node *node) const
+{
+  int32_t index = nodeIndex(node);
+  return retrieveKeyName(index);
+}
 
-  switch (setting_type) {
-    case FILTER_SETTING:
-      parent_node = 1;
-      mem_managed = false;
-      break;
-    case FILTER_COMMAND:
-      parent_node = 2;
-      mem_managed = false;
-      break;
+std::string Settings::retrieveKeyName(int32_t index) const
+{
+  if (index < 0 || index >= static_cast<int32_t>(node_list_.size())) {
+    std::cout << "retrieveKeyName: value index " << index
+              << " is invalid. Should be in [0, " << node_list_.size() << ")."
+              << std::endl;
+    return "";
+  }
+  // Get the node at the specified index
+  const Node *node = this->operator[](index);
+  std::string key_name;
 
-    case DEVICE_SETTING:
-      parent_node = 3;
-      mem_managed = true;
-      break;
-    case QUEUE_SETTING:
-      parent_node = 4;
-      mem_managed = false;
-      break;
+  while (node != dynamic_cast<const Node *>(&root())) {
+    key_name = node->name() + "." + key_name;
+    // Retrieve the parent node
+    size_t parent_index = parentIndex(node);
+    node = this->operator[](parent_index);
+  }
+  // Remove the last dot
+  key_name = key_name[key_name.size() - 1] == '.'
+                 ? key_name.substr(0, key_name.size() - 1)
+                 : key_name;
+  return key_name;
+}
+
+int32_t Settings::addSettingNode(std::unique_ptr<Node> node,
+                                 int32_t parent_index)
+{
+  if (parent_index < 1) {
+    std::cerr << "[Settings] " << node->name()
+              << " could not be added, parent index must be >=1." << std::endl;
+    return -1;
   }
 
-  // Variable declaration for the node addition.
-  Node2 *new_node;
-  bool unique_name;
-
-  new_node = new DataNode(name, data_type, {1}, &value, mem_managed, tooltip,
-                          false, accessmode);
-  unique_name = setting_map_.try_emplace(name, new_node).second;
+  std::string name = node->name();
+  std::string key_name = retrieveKeyName(parent_index) + "." + name;
+  bool unique_name = setting_map_.find(key_name) == setting_map_.end();
 
   // Check if the node additon was completed.
   if (unique_name) {
-    // When added, NodeTree acquires ownership of the dynamically allocated
-    // node.
-    add(new_node, ep::EP_HAS_CHILD, parent_node);
-    return 0;
+    // NodeTree acquires ownership of the dynamically allocated node.
+    Node *node_ptr = node.get();
+    int32_t ret = add(std::move(node), epf::EP_HAS_CHILD, parent_index);
+    if (ret < 0) {
+      return ret;
+    }
+    const bool emplaced = setting_map_.try_emplace(key_name, node_ptr).second;
+    if (!emplaced) {
+      std::cerr << "[Settings] Node was added, but key \"" << key_name
+                << "\" could not be inserted into setting_map_." << std::endl;
+    }
+    return ret;
   }
   else {
-    // Delete dynamically allocated node.
-    delete new_node;
-    std::cout << "addSetting: Setting name already in use." << std::endl;
+    std::cerr << "[Settings] ::addSetting failed. \"" << name
+              << "\" setting in \"" << key_name
+              << "\" filter. Setting name already in use. " << std::endl;
     return -1;
   }
 }
 
-int32_t Settings2::addCommand(std::string name,
-                              std::function<int32_t()> command,
-                              std::string tooltip, AccessType accessmode)
+int32_t Settings::addCommandUnder(std::string name,
+                                  std::function<int32_t()> command,
+                                  const int32_t parent_index,
+                                  std::string tooltip, AccessType accessmode)
 {
-  // index of filter_commands folder
-  int32_t parent_node = 2;
+  std::unique_ptr<Node> node =
+      std::make_unique<CommandNode>(name, command, tooltip, accessmode);
 
-  CommandNode *new_node = new CommandNode(name, command, tooltip, accessmode);
-  bool unique_name = setting_map_.try_emplace(name, new_node).second;
+  return addSettingNode(std::move(node), parent_index);
+}
 
-  if (unique_name) {
-    // When added, NodeTree acquires ownership of the dynamically allocated
-    // node.
-    add(new_node, ep::EP_HAS_CHILD, parent_node);
-    return 0;
+int32_t Settings::addCommand(std::string name, std::function<int32_t()> command,
+                             const SettingType type, std::string tooltip,
+                             AccessType accessmode)
+{
+  auto index = settingIndex(settingtype_to_string(type));
+  return addCommandUnder(name, command, index, tooltip, accessmode);
+}
+
+int32_t Settings::runCommand(std::string key_name)
+{
+  try {
+    const Node *node = setting_map_.at(key_name);
+    if (node) {
+      if (node->nodetype() == epf::EP_COMMANDNODE) {
+        const CommandNode *command_node =
+            static_cast<const CommandNode *>(node);
+        return command_node->run();
+      }
+      else {
+        std::cout << "runCommand(): \"" << key_name
+                  << "\" is not a command setting." << std::endl;
+        return -1;
+      }
+    }
   }
-  else {
-    // Delete dynamically allocated node.
-    delete new_node;
-    std::cout << "addSetting: Setting name already in use." << std::endl;
+  catch (const std::out_of_range &e) {
+    std::cout << "runCommand(): \"" << key_name << "\" not found." << std::endl;
     return -1;
   }
+  throw;
 }
 
-int32_t Settings2::runCommand(std::string name)
+bool Settings::isDeviceSetting(std::string name) const
 {
-  const Node2 *node = operator[](name);
-  if (node) {
-    if (node->nodetype() == ep::EP_COMMANDNODE) {
-      const CommandNode *command_node = static_cast<const CommandNode *>(node);
-      return command_node->run();
-    }
-    else {
-      std::cout << "runCommand(): \"" << name << "\" is not a command setting."
-                << std::endl;
-      return -1;
-    }
-  }
-  std::cout << "runCommand(): \"" << name << "\" not found." << std::endl;
-  return -1;
-}
-
-bool Settings2::isDeviceSetting(std::string name) const
-{
-  const Node2 *node = operator[](name);
+  const Node *node = operator[](name);
   // If found...
   if (node) {
-    size_t idx = parentIndex(node);
-    if (node_list_[idx]->name() == folder_name_[2]) {
-      return true;
+    int32_t idx = parentIndex(node);
+    if (idx >= 0) {
+      if (node_list_[idx]->name() == settingtype_to_string(DEVICE_SETTING)) {
+        return true;
+      }
     }
-    else {
-      return false;
-    }
+    return false;
   }
 
-  std::cout << "value: Setting key \"" << name << "\" not found. " << std::endl;
+  std::cout << "isDeviceSetting: Setting key \"" << name << "\" not found. "
+            << std::endl;
   return false;
 }
 
-AccessType Settings2::settingAccessMode(std::string name)
+std::optional<AccessType> Settings::settingAccessMode(std::string name)
 {
   // If found...
-  const Node2 *node = operator[](name);
+  const Node *node = operator[](name);
   if (node) {
-    if (node->nodetype() == EP_DATANODE) {
-      return static_cast<const DataNode *>(node)->accessMode();
-    }
-    if (node->nodetype() == EP_COMMANDNODE) {
-      return static_cast<const CommandNode *>(node)->accessMode();
-    }
+    return node->accessMode();
   }
   std::cout << "settingAccessMode: key \"" << name << "\" not found"
             << std::endl;
-  
-  return ep::R;
+
+  return std::nullopt;
 }
 
-int32_t Settings2::fromYAML(const YAML::Node &config)
+int32_t Settings::fromYAML(const YAML::Node &config)
 {
-  std::cout << "Updating config from yaml " << std::endl;
-
-  for (std::string name : folder_name_) {
-    if (name != folder_name_[2])
-      parseYAMLnode(config[name]);
+  // std::cout << "Updating config from yaml " << std::endl;
+  for (int i = BASE_SETTING; i < SETTING_TYPE_COUNT; ++i) {
+    SettingType type = static_cast<SettingType>(i);
+    auto name = settingtype_to_string(type);
+    if ((config["settings"]) && (config["settings"][name])) {
+      parseYAMLnode(config["settings"][name], name);
+    }
+    // else
+    //   printf("not found %s\n", name.c_str());
   }
   return 0;
 }
 
-int32_t Settings2::toYAML(YAML::Node &filter_node)
+int32_t Settings::toYAML(YAML::Node &filter_node)
 {
   // Filter Settings Node
   YAML::Node filter_settings_node;
 
-  Node2 *root = this->root().references()[0].address();
-  for (const auto &node_ref : root->references()) {
-    Node2 *n = node_ref.address();
-    filter_settings_node[n->name()] = this->valueString(n->name());
+  for (int i = BASE_SETTING; i < SETTING_TYPE_COUNT; ++i) {
+    SettingType type = static_cast<SettingType>(i);
+    auto folder = settingtype_to_string(type);
+
+    Node *root = setting_map_.at(folder);
+    for (const auto &node_ref : root->references()) {
+      Node *node = node_ref.address();
+      if (node->isDataNode() || node->isStringNode()) {
+        std::string value = this->valueString(folder + "." + node->name());
+        if (!value.empty()) {
+          filter_settings_node[folder][node->name()] = value;
+        }
+      }
+      else if (node->isObjectNode()) {
+        YAML::Node child_yaml = YAML::Node();
+        child_yaml["id"] = node->name();
+        for (const auto &child_ref : node->references()) {
+          Node *child = child_ref.address();
+          if (child->isDataNode() || child->isStringNode()) {
+            std::string value = this->valueString(folder + "." + node->name() +
+                                                  "." + child->name());
+            if (!value.empty()) {
+              child_yaml[child->name()] = value;
+            }
+          }
+        }
+        filter_settings_node[folder].push_back(child_yaml);
+      }
+    }
   }
 
-  filter_node["filter_settings"] = filter_settings_node;
-
-  // Command Settings Node
-  YAML::Node filter_command_node;
-  root = this->root().references()[1].address();
-  for (const auto &command : root->references()) {
-    filter_command_node[command.address()->name()] = "";
-  }
-    
-  if (filter_command_node.size() != 0)
-    filter_node["filter_commands"] = filter_command_node;
-
-  // Device Settings Node
-  YAML::Node device_settings_node;
-  root = this->root().references()[2].address();
-  for (const auto &setting : root->references()) {
-    device_settings_node[setting.address()->name()] =
-        this->valueString(setting.address()->name());
-  }
-
-  if (device_settings_node.size() != 0)
-    filter_node["device_settings"] = device_settings_node;
+  filter_node["settings"] = filter_settings_node;
 
   return 0;
 }
 
-int32_t Settings2::parseYAMLnode(YAML::Node yaml_node)
+int32_t Settings::parseYAMLnode(YAML::Node yaml_node, std::string root_key_name)
 {
-  for (YAML::const_iterator it = yaml_node.begin(); it != yaml_node.end();
-       ++it) {
-    std::string key = it->first.as<std::string>();
-    std::string value;
-
-    if (yaml_node[key].Type() == YAML::NodeType::Scalar) {
-      value = it->second.as<std::string>();
-      // std::cout << key << " : " << value << std::endl;
-
-      setValue(key, value);
+  if (settingExists(root_key_name)) {
+    if (yaml_node.IsMap()) {
+      for (YAML::const_iterator it = yaml_node.begin(); it != yaml_node.end();
+           ++it) {
+        std::string key = it->first.as<std::string>();
+        std::string key_name = root_key_name + "." + key;
+        parseYAMLnode(yaml_node[key], key_name);
+      }
     }
-    else if (yaml_node[key].Type() == YAML::NodeType::Map) {
-      // std::cout << key << " : Map" << std::endl;
+    else if (yaml_node.IsScalar()) {
+      std::string key = root_key_name;
+      std::string value = yaml_node.as<std::string>();
+      // std::cout << root_key_name << " : " << value << std::endl;
+      setValue(root_key_name, value);
+    }
+    else if (yaml_node.IsSequence()) {
+      for (const auto &element : yaml_node) {
+        std::string key_name =
+            root_key_name + "." + element["id"].as<std::string>();
+        YAML::Node element_copy = YAML::Clone(element);
 
-      parseYAMLnode(yaml_node[key]);
+        // Remove the "id" key from the copy
+        element_copy.remove("id");
+        parseYAMLnode(element_copy, key_name);
+      }
     }
     else {
       std::cout << "YAML NodeType not supported." << std::endl;
@@ -263,17 +321,17 @@ int32_t Settings2::parseYAMLnode(YAML::Node yaml_node)
   return 0;
 }
 
-std::vector<std::string> Settings2::listNames(int32_t device_setting) const
+std::vector<std::string> Settings::listNames(int32_t type) const
 {
   std::vector<std::string> names_list;
-  if (device_setting == 0) {
+  if (type == BASE_SETTING) {
     for (auto it : setting_map_) {
       if (!isDeviceSetting(it.first)) {
         names_list.push_back(it.first);
       }
     }
   }  //
-  else if (device_setting == 1) {
+  else if (type == DEVICE_SETTING) {
     for (auto it : setting_map_) {
       if (isDeviceSetting(it.first)) {
         names_list.push_back(it.first);
@@ -288,70 +346,205 @@ std::vector<std::string> Settings2::listNames(int32_t device_setting) const
   return names_list;
 }
 
-std::string Settings2::valueString(const std::string name) const
+std::string Settings::valueString(const std::string name) const
+{
+  auto raw = valueStringRaw(name);
+  auto maybe_numeric = [&raw]() -> std::optional<int32_t> {
+    if (raw.empty()) return std::nullopt;
+    try {
+      size_t idx = 0;
+      int32_t value = std::stoi(raw, &idx);
+      if (idx != raw.size()) return std::nullopt;
+      return value;
+    }
+    catch (const std::exception &) {
+      return std::nullopt;
+    }
+  }();
+
+  if (!maybe_numeric.has_value()) return raw;
+  auto label = enumLabelForValue(name, *maybe_numeric);
+  if (!label.has_value()) return raw;
+  return *label;
+}
+
+std::string Settings::valueStringRaw(const std::string name) const
 {
   // Look for the setting name in the setting_map_
   auto iterator = setting_map_.find(name);
 
   // If found...
   if (iterator != setting_map_.end()) {
-    if (iterator->second->nodetype() == ep::EP_DATANODE) {
-      ep::DataNode *node = (ep::DataNode *)iterator->second;
+    if (iterator->second->nodetype() == epf::EP_DATANODE) {
+      epf::DataNode *node = (epf::DataNode *)iterator->second;
 
       // Automatic internal type deduction
-      if (node->datatype() == ep::EP_BOOL) {
-        return std::to_string(*static_cast<bool *>(node->value()));
+      if (node->datatype() == epf::EP_BOOL) {
+        if (*static_cast<bool *>(node->value())) {
+          return "true";
+        }
+        else {
+          return "false";
+        }
       }
-      else if (node->datatype() == ep::EP_8C) {
+      else if (node->datatype() == epf::EP_8C) {
         return std::to_string(*static_cast<char *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_8U) {
+      else if (node->datatype() == epf::EP_8U) {
         return std::to_string(*static_cast<uint8_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_8S) {
+      else if (node->datatype() == epf::EP_8S) {
         return std::to_string(*static_cast<int8_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_16U) {
+      else if (node->datatype() == epf::EP_16U) {
         return std::to_string(*static_cast<uint16_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_16S) {
+      else if (node->datatype() == epf::EP_16S) {
         return std::to_string(*static_cast<int16_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_32U) {
+      else if (node->datatype() == epf::EP_32U) {
         return std::to_string(*static_cast<uint32_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_32S) {
+      else if (node->datatype() == epf::EP_32S) {
         return std::to_string(*static_cast<int32_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_64U) {
+      else if (node->datatype() == epf::EP_64U) {
         return std::to_string(*static_cast<uint64_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_64S) {
+      else if (node->datatype() == epf::EP_64S) {
         return std::to_string(*static_cast<int64_t *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_32F) {
+      else if (node->datatype() == epf::EP_32F) {
         return std::to_string(*static_cast<float *>(node->value()));
       }
-      else if (node->datatype() == ep::EP_64F) {
+      else if (node->datatype() == epf::EP_64F) {
         return std::to_string(*static_cast<double *>(node->value()));
-      }
-      else if (node->datatype() == ep::EP_STRING) {
-        return *static_cast<std::string *>(node->value());
       }
       else {
         return std::string();
       }
     }
+    else if (iterator->second->nodetype() == epf::EP_STRINGNODE) {
+      epf::StringNode *node = dynamic_cast<StringNode *>(iterator->second);
+      return *node->value();
+    }
     else {
-      std::cout << "valueStr: Invalid nodetype. " << std::endl;
+      std::cout << "valueString: Invalid nodetype -> "
+                << nodetype_to_string(iterator->second->nodetype()) << "."
+                << std::endl;
       std::string not_found;
       return not_found;
     }
   }
   else {
-    std::cout << "value: Setting key \"" << name << "\" not found. "
+    std::cout << "valueString: Setting key \"" << name << "\" not found. "
               << std::endl;
     std::string not_found;
     return not_found;
   }
+}
+
+bool Settings::hasEnumOptions(const std::string &name) const
+{
+  return !enumOptions(name).empty();
+}
+
+std::vector<Settings::EnumOption> Settings::enumOptions(
+    const std::string &name) const
+{
+  std::vector<EnumOption> options;
+  auto iterator = setting_map_.find(name);
+  if (iterator == setting_map_.end()) return options;
+
+  const auto *node = iterator->second;
+  for (const auto &ref : node->references()) {
+    if (ref.type() != epf::EP_HAS_ENUMVALUE) continue;
+    const auto *enum_node = ref.address();
+    if (!enum_node || !enum_node->isObjectNode()) continue;
+
+    std::optional<int32_t> value;
+    std::string display_name;
+    for (const auto &option_ref : enum_node->references()) {
+      const auto *child = option_ref.address();
+      if (!child) continue;
+
+      if (child->isDataNode() && child->name() == "value") {
+        const auto *data_node = static_cast<const DataNode *>(child);
+        if (data_node->datatype() == epf::EP_32S) {
+          value = *static_cast<int32_t *>(data_node->value());
+        }
+      }
+      else if (child->isStringNode() && child->name() == "display_name") {
+        const auto *str_node = static_cast<const StringNode *>(child);
+        display_name = *str_node->value();
+      }
+    }
+
+    if (!value.has_value()) continue;
+    EnumOption option{*value, enum_node->name(),
+                      display_name.empty() ? enum_node->name() : display_name};
+    options.push_back(option);
+  }
+
+  std::sort(options.begin(), options.end(),
+            [](const EnumOption &a, const EnumOption &b) {
+              return a.value < b.value;
+            });
+  return options;
+}
+
+std::optional<std::string> Settings::enumLabelForValue(const std::string &name,
+                                                       int32_t value) const
+{
+  for (const auto &option : enumOptions(name)) {
+    if (option.value == value) return option.display_name;
+  }
+  return std::nullopt;
+}
+
+std::optional<int32_t> Settings::enumValueForLabel(
+    const std::string &name, const std::string &label) const
+{
+  for (const auto &option : enumOptions(name)) {
+    if (option.label == label || option.display_name == label) {
+      return option.value;
+    }
+  }
+  return std::nullopt;
+}
+
+int32_t Settings::addEnumOptions(const std::string &name,
+                                 const std::vector<EnumOption> &options)
+{
+  auto iterator = setting_map_.find(name);
+  if (iterator == setting_map_.end()) return -1;
+  auto *node = iterator->second;
+  if (!node) return -1;
+  int32_t parent_index = nodeIndex(node);
+  if (parent_index < 0) return -1;
+
+  for (const auto &existing_ref : node->references()) {
+    if (existing_ref.type() == epf::EP_HAS_ENUMVALUE) {
+      return 0;
+    }
+  }
+
+  for (const auto &option : options) {
+    auto option_node = std::make_unique<ObjectNode>(option.label);
+
+    auto value_node = std::make_unique<DataNode>(
+        "value", epf::EP_32S, std::vector<size_t>{1}, "", epf::R);
+    *static_cast<int32_t *>(value_node->value()) = option.value;
+    option_node->addReference(epf::EP_HAS_CHILD, std::move(value_node));
+
+    if (!option.display_name.empty()) {
+      auto display_node = std::make_unique<StringNode>(
+          "display_name", option.display_name, epf::R);
+      option_node->addReference(epf::EP_HAS_CHILD, std::move(display_node));
+    }
+
+    add(std::move(option_node), epf::EP_HAS_ENUMVALUE, parent_index);
+  }
+
+  return 0;
 }

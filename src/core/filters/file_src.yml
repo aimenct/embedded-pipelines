@@ -1,0 +1,24 @@
+# FileSrc full pipeline configuration template.
+# Copy/paste this block into your config.yml.
+
+filters:
+  - name: FileSource
+    type: FileSrc
+    settings:
+      base:
+        # ---- FileSrc built-in filter settings ----
+        data_file: /path/to/data_schema.yml   # YAML schema for data buffer
+        hdr_file: /path/to/header_schema.yml  # YAML schema for header buffer
+        timeout: 0                            # Read timeout (framework units)
+        loop: false                           # Restart from first file at EOF
+
+      sink_ports:
+        # FileSrc is Filter(config, 0, 1): generated data goes to sink port 0.
+        "0":
+          length: 50
+          max_readers: 5
+          max_writers: 1
+          queue_type: 0
+          batch_size: 1
+          blocking: true
+          timestamp: false

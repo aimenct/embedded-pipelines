@@ -4,56 +4,54 @@
 
 #include "queue_handlers.h"
 
-using namespace ep;
+#include <cstring>
 
-QueueWriter::QueueWriter(std::shared_ptr<Queue> q)
+#include "time_utils.h"
+
+using namespace epf;
+
+QueueWriter::QueueWriter(Queue *q)
 {
-  if (q == nullptr) {
-    std::cerr << "Error: QueueWriter - Queue pointer is null." << std::endl;
-    exit(0);
-  }
-
-  q_ = q;
-  id_ = -1;
-  lenA_ = -1;
-  lenA_ = -1;
-  dataPtrA_ = nullptr;
-  dataPtrB_ = nullptr;
-  hdrPtrA_ = nullptr;
-  hdrPtrB_ = nullptr;
-  messages_ = 0;
-
-  this->subscribe();
+  queue_ = q;
+  subscribe(queue_);
 }
 
 QueueWriter::~QueueWriter()
 {
-  this->unsubscribe();
-  q_ = nullptr;
+  if (queue_) {
+    this->unsubscribe();
+    queue_ = nullptr;
+    id_ = -1;
+  }
 }
 
-int QueueWriter::subscribe()
+int QueueWriter::subscribe(Queue *q)
 {
-  if (q_ == nullptr) {
-    std::cerr << "Writer subscribed q == nullptr " << std::endl;
+  if (q == nullptr) {
+    std::cerr << "QueueWriter subscribed q == nullptr " << std::endl;
     return -1;
   }
 
-  id_ = q_->subscribeProducer();
+  if (id_ != -1) {
+    std::cerr << "QueueWriter already subscribed id != -1 " << std::endl;
+    return -1;
+  }
+
+  queue_ = q;
+
+  id_ = queue_->subscribeProducer();
   if (id_ >= 0) {
     //    std::cout << "Writer subscribed with ID: " << id_ << std::endl;
 
-    if (q_->dataMessage() != nullptr)
-      data_msg_ = *(q_->dataMessage());
+    if (queue_->dataMessage() != nullptr) data_msg_ = *(queue_->dataMessage());
     //    else
-      // std::cout << "Writer subscribe: queue doesn't have data msg structure"
-      //           << std::endl;
+    // std::cout << "Writer subscribe: queue doesn't have data msg structure"
+    //           << std::endl;
 
-    if (q_->hdrMessage() != nullptr)
-      hdr_msg_ = *(q_->hdrMessage());
+    if (queue_->hdrMessage() != nullptr) hdr_msg_ = *(queue_->hdrMessage());
     //    else
-      // std::cout << "Writer subscribe: queue doesn't have hdr msg structure"
-      //           << std::endl;
+    // std::cout << "Writer subscribe: queue doesn't have hdr msg structure"
+    //           << std::endl;
 
     return 0;
   }
@@ -63,13 +61,19 @@ int QueueWriter::subscribe()
 
 int QueueWriter::unsubscribe()
 {
-  if (q_ == nullptr) {
-    std::cerr << "Writer unsubscribed q == nullptr " << std::endl;
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter unsubscribed failed. Queue == nullptr "
+              << std::endl;
+    return -1;
+  }
+
+  if (id_ == -1) {
+    std::cerr << "QueueWriter already unsubscribed id == -1 " << std::endl;
     return -1;
   }
 
   int err = 0;
-  err = q_->unsubscribeProducer(id_);
+  err = queue_->unsubscribeProducer(id_);
   if (err < 0) {
     std::cerr << "Error: Writer unsubscribe operation failed " << err
               << std::endl;
@@ -77,6 +81,7 @@ int QueueWriter::unsubscribe()
   }
   //  std::cerr << "Writer unsubscribe with ID: " << id_ << std::endl;
   id_ = -1;
+  queue_ = nullptr;
   return 0;
 }
 
@@ -88,66 +93,99 @@ int QueueWriter::id() const
 int QueueWriter::startWrite()
 {
   messages_ = 1;
-  int err = q_->startWrite(id_, messages_, &dataPtrA_, &hdrPtrA_, &lenA_,
-                           &dataPtrB_, &hdrPtrB_, &lenB_);
+  int32_t err = startWrite(messages_);
+  if (err < 0) {
+    return err;
+  }
+
+  data_msg_.updateMessage(data_ptr_a_);
+  hdr_msg_.updateMessage(hdr_ptr_a_);
+  return err;
+}
+
+int QueueWriter::startWrite(int messages)
+{
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter startWrite failed. Queue == nullptr "
+              << std::endl;
+    return -1;
+  }
+
+  messages_ = messages;
+  int32_t err = queue_->startWrite(id_, messages_, &data_ptr_a_, &hdr_ptr_a_,
+                                   &len_a_, &data_ptr_b_, &hdr_ptr_b_, &len_b_);
   if (err < 0) {
     // std::cerr << "Error: Writer startWrite operation failed " << err
     //           << std::endl;
     return err;
   }
-  data_msg_.updateMessage(dataPtrA_);
-  hdr_msg_.updateMessage(hdrPtrA_);
+  // data_msg_.updateMessage(data_ptr_a_);
+  // hdr_msg_.updateMessage(hdr_ptr_a_);
   return err;
 }
 
-int QueueWriter::startWrite(int msgs)
+int QueueWriter::endWrite(int done)
 {
-  messages_ = msgs;
-  int err = q_->startWrite(id_, messages_, &dataPtrA_, &hdrPtrA_, &lenA_,
-                           &dataPtrB_, &hdrPtrB_, &lenB_);
-  // if (err < 0) {
-  //   // std::cerr << "Error: Reader startRead operation failed " << err
-  //   //           << std::endl;
-  //   return err;
-  // }
-  // //  msg = msg_->parse(data);
-  // //  msg_.updateMessage(data);
-  return err;
-}
-
-int QueueWriter::endWrite()
-{
-  int err = 0;
-  err = q_->endWrite(id_);
-  if (err < 0) {
-    std::cerr << "Error: Writer endWrite operation failed " << err << std::endl;
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter endWrite failed. Queue == nullptr " << std::endl;
     return -1;
   }
-  return 0;
+
+  if (timestamp_enabled_) {
+    uint64_t ts = get_unix_timestamp_ms();
+    for (int i = 0; i < messages_; ++i) {
+      char *base_ptr = nullptr;
+      if (i < len_a_) {
+        base_ptr = hdr_ptr_a_ + static_cast<size_t>(i) * queue_->hdrSize();
+      }
+      else {
+        base_ptr =
+            hdr_ptr_b_ + static_cast<size_t>(i - len_a_) * queue_->hdrSize();
+      }
+      if (base_ptr != nullptr) {
+        std::memcpy(base_ptr + timestamp_offset_, &ts, sizeof(uint64_t));
+      }
+    }
+  }
+
+  int32_t err = queue_->endWrite(id_, done);
+  if (err < 0) {
+    std::cerr << "Error: Writer endWrite operation failed " << err << std::endl;
+  }
+
+  return err;
 }
 
-int QueueWriter::endWriteAbort()
+int QueueWriter::endWriteAbort(int pending)
 {
-  int err = 0;
-  err = q_->endWriteAbort(id_);
-  if (err < 0) {
-    std::cerr << "Error: Writer endWrite Abort operation failed " << err
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter endWriteAbort failed. Queue == nullptr "
               << std::endl;
     return -1;
   }
-  return 0;
+
+  int32_t err = queue_->endWriteAbort(id_, pending);
+  if (err < 0) {
+    std::cerr << "Error: Writer endWrite Abort operation failed " << err
+              << std::endl;
+  }
+  return err;
 }
 
 int QueueWriter::setBlockingCalls(bool flag)
 {
-  int err = 0;
-  err = q_->setWriteBlocking(id_, flag);
-  if (err < 0) {
-    std::cerr << "Error: Writer blockingCalls operation failed " << err
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter setBlockingCalls failed. Queue == nullptr "
               << std::endl;
     return -1;
   }
-  return 0;
+
+  int32_t err = queue_->setWriteBlocking(id_, flag);
+  if (err < 0) {
+    std::cerr << "Error: Writer blockingCalls operation failed " << err
+              << std::endl;
+  }
+  return err;
 }
 
 Message *QueueWriter::dataSchema()
@@ -165,58 +203,124 @@ int QueueWriter::msgCount() const
   return messages_;
 }
 
-Message &QueueWriter::dataMsg(int i)
+Message *QueueWriter::dataMsg(int i)
 {
-  if (i < messages_)
-    if (i < lenA_)
-      data_msg_.updateMessage(dataPtrA_ + i * q_->dataSize());
-    else
-      data_msg_.updateMessage(dataPtrB_ + i * q_->dataSize());
-  else
-    std::cerr << "Error: dataMsg beyond limits i=" << i << std::endl;
-  return data_msg_;
+  if ((i < messages_) && (i >= 0)) {
+    if (i < len_a_) {
+      char *address_to_update =
+          data_ptr_a_ + static_cast<size_t>(i) * queue_->dataSize();
+      data_msg_.updateMessage(address_to_update);
+    }
+    else {
+      char *address_to_update =
+          data_ptr_b_ + static_cast<size_t>(i) * queue_->dataSize();
+      data_msg_.updateMessage(address_to_update);
+    }
+  }
+  else {
+    std::cerr << "QueueWriter: dataMsg beyond limits i=" << i << std::endl;
+  }
+  return &data_msg_;
 }
 
-Message &QueueWriter::hdrMsg(int i)
+Message *QueueWriter::hdrMsg(int i)
 {
-  if (i < messages_)
-    if (i < lenA_)
-      hdr_msg_.updateMessage(hdrPtrA_ + i * q_->hdrSize());
-    else
-      hdr_msg_.updateMessage(hdrPtrB_ + i * q_->hdrSize());
-  else
-    std::cerr << "Error: hdrMsg beyond limits i=" << i << std::endl;
-  return hdr_msg_;
+  if ((i < messages_) && (i >= 0)) {
+    if (i < len_a_) {
+      char *address_to_update =
+          hdr_ptr_a_ + static_cast<size_t>(i) * queue_->hdrSize();
+      hdr_msg_.updateMessage(address_to_update);
+    }
+    else {
+      char *address_to_update =
+          hdr_ptr_b_ + static_cast<size_t>(i) * queue_->hdrSize();
+      hdr_msg_.updateMessage(address_to_update);
+    }
+  }
+  else {
+    std::cerr << "QueueWriter: hdrMsg beyond limits i=" << i << std::endl;
+  }
+  return &hdr_msg_;
+}
+
+char *QueueWriter::dataPtr(int idx) const
+{
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter: dataPtr failed. Queue == nullptr" << std::endl;
+    return nullptr;
+  }
+  int queue_slots = queue_->length();
+  if (queue_->type() == fifo) {
+    // FIFO queues keep one extra internal slot to disambiguate full vs empty.
+    // startWrite() returns indices in that internal ring space.
+    queue_slots += 1;
+  }
+
+  if ((idx < 0) || (idx >= queue_slots)) {
+    std::cerr << "QueueWriter: dataPtr index out of range idx=" << idx
+              << std::endl;
+    return nullptr;
+  }
+  return queue_->dataBuffer() + static_cast<size_t>(idx) * queue_->dataSize();
+}
+
+Message *QueueWriter::hdrMsgIdx(int idx)
+{
+  if (queue_ == nullptr) {
+    std::cerr << "QueueWriter: hdrMsgIdx failed. Queue == nullptr" << std::endl;
+    return &hdr_msg_;
+  }
+  int queue_slots = queue_->length();
+  if (queue_->type() == fifo) {
+    // FIFO queues keep one extra internal slot to disambiguate full vs empty.
+    // startWrite() returns indices in that internal ring space.
+    queue_slots += 1;
+  }
+
+  if ((idx < 0) || (idx >= queue_slots)) {
+    std::cerr << "QueueWriter: hdrMsgIdx index out of range idx=" << idx
+              << std::endl;
+    return &hdr_msg_;
+  }
+
+  hdr_ptr_a_ =
+      queue_->hdrBuffer() + static_cast<size_t>(idx) * queue_->hdrSize();
+  hdr_ptr_b_ = nullptr;
+  len_a_ = 1;
+  len_b_ = 0;
+  messages_ = 1;
+  hdr_msg_.updateMessage(hdr_ptr_a_);
+  return &hdr_msg_;
 }
 
 char *QueueWriter::dataPtrA() const
 {
-  return dataPtrA_;
+  return data_ptr_a_;
 }
 
 char *QueueWriter::dataPtrB() const
 {
-  return dataPtrB_;
+  return data_ptr_b_;
 }
 
 char *QueueWriter::hdrPtrA() const
 {
-  return hdrPtrA_;
+  return hdr_ptr_a_;
 }
 
 char *QueueWriter::hdrPtrB() const
 {
-  return hdrPtrB_;
+  return hdr_ptr_b_;
 }
 
 int QueueWriter::lenA() const
 {
-  return lenA_;
+  return len_a_;
 }
 
 int QueueWriter::lenB() const
 {
-  return lenB_;
+  return len_b_;
 }
 
 int QueueWriter::setBatchSize(int size)
@@ -230,84 +334,112 @@ int QueueWriter::batchSize() const
   return batch_size_;
 }
 
-std::shared_ptr<Queue> QueueWriter::queue() const
+void QueueWriter::enableTimestamp(bool flag)
 {
-  return q_;
+  timestamp_enabled_ = flag;
 }
 
-QueueReader::QueueReader(std::shared_ptr<Queue> q)
+void QueueWriter::setTimestampOffset(size_t offset)
 {
-  if (q == nullptr) {
-    std::cerr << "Error: QueueReader - Queue pointer is null." << std::endl;
-    exit(0);
+  timestamp_offset_ = offset;
+}
+
+bool QueueWriter::timestampEnabled() const
+{
+  return timestamp_enabled_;
+}
+
+Queue *QueueWriter::queue() const
+{
+  return queue_;
+}
+
+int QueueWriter::wakeUp()
+{
+  if (queue_ != nullptr) {
+    queue_->wakeUpProducers();
+    return 0;
   }
+  else {
+    std::cerr << "Error: Writer wake up - operation failed " << id_
+              << std::endl;
+    return -1;
+  }
+}
 
-  q_ = q;
-  id_ = -1;
-  lenA_ = -1;
-  lenA_ = -1;
-  dataPtrA_ = nullptr;
-  dataPtrB_ = nullptr;
-  hdrPtrA_ = nullptr;
-  hdrPtrB_ = nullptr;
-  messages_ = 0;
-
-  this->subscribe();
+QueueReader::QueueReader(Queue *q)
+{
+  queue_ = q;
+  subscribe(queue_);
 }
 
 QueueReader::~QueueReader()
 {
-  this->unsubscribe();
-  q_ = nullptr;
+  if (queue_) {
+    this->unsubscribe();
+    queue_ = nullptr;
+    id_ = -1;
+  }
 }
 
-int QueueReader::subscribe()
+int QueueReader::subscribe(Queue *q)
 {
-  if (q_ == nullptr) {
-    std::cerr << "Reader subscribed q == nullptr " << std::endl;
+  if (q == nullptr) {
+    std::cerr << "QueueReader: imposible to subscribe. q == nullptr "
+              << std::endl;
     return -1;
   }
 
-  id_ = q_->subscribeConsumer();
+  if (id_ != -1) {
+    std::cerr << "QueueReader: already subscribed id != -1 " << std::endl;
+    return -1;
+  }
+
+  queue_ = q;
+
+  id_ = queue_->subscribeConsumer();
 
   if (id_ >= 0) {
     //    std::cout << "Reader subscribed with ID: " << id_ << std::endl;
 
-    if (q_->dataMessage() != nullptr)
-      data_msg_ = *(q_->dataMessage());
+    if (queue_->dataMessage() != nullptr) data_msg_ = *(queue_->dataMessage());
     // else
     //   std::cout << "Reader subscribe: queue doesn't have Msg structure"
     //             << std::endl;
 
-    if (q_->hdrMessage() != nullptr)
-      hdr_msg_ = *(q_->hdrMessage());
+    if (queue_->hdrMessage() != nullptr) hdr_msg_ = *(queue_->hdrMessage());
     // else
     //   std::cout << "Reader subscribe: queue doesn't have hdr msg structure"
     //             << std::endl;
 
     return 0;
   }
-  std::cerr << "Error: Reader subscribe operation failed " << id_ << std::endl;
+  std::cerr << "Error: QueueReader: subscribe operation failed " << id_
+            << std::endl;
   return id_;
 }
 
 int QueueReader::unsubscribe()
 {
-  if (q_ == nullptr) {
-    std::cerr << "Reader unsubscribed q == nullptr " << std::endl;
+  if (queue_ == nullptr) {
+    std::cerr << "Reader unsubscribed failed. Queue == nullptr " << std::endl;
     return -1;
   }
 
-  int err = 0;
-  err = q_->unsubscribeConsumer(id_);
+  if (id_ == -1) {
+    std::cerr << "Reader already unsubscribed id == -1 " << std::endl;
+    return -1;
+  }
+
+  int err = queue_->unsubscribeConsumer(id_);
   if (err < 0) {
-    std::cerr << "Error: Reader unsubscribe operation failed " << err
-              << std::endl;
+    std::cerr << "Error: Reader with ID " << id_
+              << " failed to unsubscribe. Error code: " << err << std::endl;
     return -1;
   }
-  std::cerr << "Reader unsubscribe with ID: " << id_ << std::endl;
+  //  std::cerr << "Reader unsubscribe with ID: " << id_ << std::endl;
   id_ = -1;
-
+  queue_ = nullptr;
   return 0;
 }
 
@@ -318,67 +450,67 @@ int QueueReader::id() const
 
 int QueueReader::startRead()
 {
-  int new_msgs = 1;
-  messages_ = 1;
-  int err = q_->startRead(id_, messages_, new_msgs, &dataPtrA_, &hdrPtrA_,
-                          &lenA_, &dataPtrB_, &hdrPtrB_, &lenB_);
-  if (err < 0) {
-    // std::cerr << "Error: Reader startRead operation failed " << err
-    //           << std::endl;
-    return err;
+  int32_t ret = startRead(message_window_, message_stride_);
+  if (ret < 0) {
+    //   // std::cerr << "Error: Reader startRead operation failed " << err
+    //   //           << std::endl;
+    return ret;
   }
+
   data_msg_.updateMessage(dataPtrA_);
   hdr_msg_.updateMessage(hdrPtrA_);
-  return 0;
+  return ret;
 }
 
-int QueueReader::startRead(int msgs, int new_msgs)
+int QueueReader::startRead(int message_window, int message_stride)
 {
-  messages_ = msgs;
-  int err = q_->startRead(id_, messages_, new_msgs, &dataPtrA_, &hdrPtrA_,
-                          &lenA_, &dataPtrB_, &hdrPtrB_, &lenB_);
-  // if (err < 0) {
-  //   //   // std::cerr << "Error: Reader startRead operation failed " << err
-  //   //   //           << std::endl;
-  //   return err;
-  // }
-
-  return err;
+  if (queue_ == nullptr) {
+    std::cerr << "QueueReader startRead failed. Queue == nullptr " << std::endl;
+    return -1;
+  }
+  int ret = queue_->startRead(id_, message_window, message_stride, &dataPtrA_,
+                              &hdrPtrA_, &lenA_, &dataPtrB_, &hdrPtrB_, &lenB_);
+  return ret;
 }
 
 int QueueReader::endRead()
 {
-  int err = 0;
-  err = q_->endRead(id_);
-  if (err < 0) {
-    std::cerr << "Error: Reader endRead operation failed " << err << std::endl;
+  if (queue_ == nullptr) {
+    std::cerr << "QueueReader endRead failed. Queue == nullptr " << std::endl;
     return -1;
   }
-  return 0;
+
+  int err = queue_->endRead(id_);
+  if (err < 0) {
+    std::cerr << "Error: Reader endRead operation failed " << err << std::endl;
+  }
+  return err;
 }
 
 int QueueReader::endReadAbort()
 {
-  int err = 0;
-  err = q_->endReadAbort(id_);
+  int err = queue_->endReadAbort(id_);
   if (err < 0) {
-    std::cerr << "Error: Reader endRead Abort operation failed " << err
+    std::cerr << "Error: Reader endReadAbort operation failed " << err
               << std::endl;
-    return -1;
   }
-  return 0;
+  return err;
 }
 
 int QueueReader::setBlockingCalls(bool flag)
 {
-  int err = 0;
-  err = q_->setReadBlocking(id_, flag);
-  if (err < 0) {
-    std::cerr << "Error: Reader blockingCalls operation failed " << err
+  if (queue_ == nullptr) {
+    std::cerr << "QueueReader setBlockingCalls failed. Queue == nullptr "
               << std::endl;
     return -1;
   }
-  return 0;
+
+  int err = queue_->setReadBlocking(id_, flag);
+  if (err < 0) {
+    std::cerr << "Error: Reader blockingCalls operation failed " << err
+              << std::endl;
+  }
+  return err;
 }
 
 Message *QueueReader::dataSchema()
@@ -391,33 +523,46 @@ Message *QueueReader::hdrSchema()
   return &hdr_msg_;
 }
 
-int QueueReader::msgCount() const
+Message *QueueReader::dataMsg(int i)
 {
-  return messages_;
+  if ((i < (lenA_ + lenB_)) && (i >= 0)) {
+    if (i < lenA_) {
+      char *address_to_update =
+          dataPtrA_ + static_cast<size_t>(i) * queue_->dataSize();
+      data_msg_.updateMessage(address_to_update);
+    }
+    else {
+      char *address_to_update =
+          dataPtrB_ + static_cast<size_t>(i) * queue_->dataSize();
+      data_msg_.updateMessage(address_to_update);
+    }
+  }
+  else {
+    std::cerr << "QueueReader: dataMsg beyond limits i=" << i << std::endl;
+    return nullptr;
+  }
+  return &data_msg_;
 }
 
-Message &QueueReader::dataMsg(int i)
+Message *QueueReader::hdrMsg(int i)
 {
-  if (i < messages_)
-    if (i < lenA_)
-      data_msg_.updateMessage(dataPtrA_ + i * q_->dataSize());
-    else
-      data_msg_.updateMessage(dataPtrB_ + i * q_->dataSize());
-  else
-    std::cerr << "Error: dataMsg beyond limits i=" << i << std::endl;
-  return data_msg_;
-}
-
-Message &QueueReader::hdrMsg(int i)
-{
-  if (i < messages_)
-    if (i < lenA_)
-      hdr_msg_.updateMessage(hdrPtrA_ + i * q_->hdrSize());
-    else
-      hdr_msg_.updateMessage(hdrPtrB_ + i * q_->hdrSize());
-  else
-    std::cerr << "Error: hdrMsg beyond limits i=" << i << std::endl;
-  return hdr_msg_;
+  if ((i < lenA_ + lenB_) && (i >= 0)) {
+    if (i < lenA_) {
+      char *address_to_update =
+          hdrPtrA_ + static_cast<size_t>(i) * queue_->hdrSize();
+      hdr_msg_.updateMessage(address_to_update);
+    }
+    else {
+      char *address_to_update =
+          hdrPtrB_ + static_cast<size_t>(i) * queue_->hdrSize();
+      hdr_msg_.updateMessage(address_to_update);
+    }
+  }
+  else {
+    std::cerr << "QueueReader: hdrMsg beyond limits i=" << i << std::endl;
+    return nullptr;
+  }
+  return &hdr_msg_;
 }
 
 char *QueueReader::dataPtrA() const
@@ -450,92 +595,42 @@ int QueueReader::lenB() const
   return lenB_;
 }
 
-int QueueReader::setBatchSize(int size)
+int QueueReader::setMessageWindow(int size)
 {
-  batch_size_ = size;
+  message_window_ = size;
   return 0;
 }
 
-int QueueReader::batchSize() const
+int QueueReader::messageWindow() const
 {
-  return batch_size_;
+  return message_window_;
 }
 
-int QueueReader::setNewPerBatch(int size)
+int QueueReader::setMessageStride(int size)
 {
-  new_per_batch_ = size;
+  message_stride_ = size;
   return 0;
 }
 
-int QueueReader::newPerBatch() const
+int QueueReader::messageStride() const
 {
-  return new_per_batch_;
+  return message_stride_;
 }
 
-std::shared_ptr<Queue> QueueReader::queue() const
+Queue *QueueReader::queue() const
 {
-  return q_;
+  return queue_;
 }
 
-namespace ep {
-
-void queueReaderSettingsFromYaml(QueueReader *r, int index,
-                                 const YAML::Node &queueSettings)
+int QueueReader::wakeUp()
 {
-  int batch = 1;
-  int new_per_batch = 1;
-  bool blocking = true;
-
-  if (queueSettings["readers"]) {
-    const YAML::Node &readers = queueSettings["readers"];
-    std::cout << "Readers:" << std::endl;
-    for (std::size_t i = 0; i < readers.size(); i++) {
-      int id = readers[i]["id"] ? readers[i]["id"].as<int>() : -1;
-      if (index == id) {
-        batch = readers[i]["batch"] ? readers[i]["batch"].as<int>() : 1;
-        new_per_batch = readers[i]["new per batch"]
-                            ? readers[i]["new per batch"].as<int>()
-                            : 1;
-        blocking =
-            readers[i]["blocking"] ? readers[i]["blocking"].as<bool>() : true;
-        break;
-      }
-    }
+  if (queue_ != nullptr) {
+    queue_->wakeUpConsumers();
+    return 0;
   }
-  r->setBatchSize(batch);
-  r->setNewPerBatch(new_per_batch);
-  r->setBlockingCalls(blocking);
-  // std::cout << "  Reader ID: " << r->id() << std::endl;
-  // std::cout << "    Batch: " << r->batchSize() << std::endl;
-  // std::cout << "    New per batch: " << r->newPerBatch() << std::endl;
-  // std::cout << "    Blocking: " << std::boolalpha << blocking << std::endl;
-  return;
-}
-
-void queueWriterSettingsFromYaml(QueueWriter *w, int index,
-                                 const YAML::Node &queueSettings)
-{
-  int batch = 1;
-  bool blocking = true;
-  if (queueSettings["writers"]) {
-    const YAML::Node &writers = queueSettings["writers"];
-    std::cout << "Writers:" << std::endl;
-    for (std::size_t i = 0; i < writers.size(); i++) {
-      int id = writers[i]["id"] ? writers[i]["id"].as<int>() : -1;
-      if (index == id) {
-        batch = writers[i]["batch"] ? writers[i]["batch"].as<int>() : 1;
-        blocking =
-            writers[i]["blocking"] ? writers[i]["blocking"].as<bool>() : true;
-        break;
-      }
-    }
+  else {
+    std::cerr << "Error: Reader wake up - operation failed " << id_
+              << std::endl;
+    return -1;
   }
-  w->setBatchSize(batch);
-  w->setBlockingCalls(blocking);
-  // std::cout << "  Writer ID: " << w->id() << std::endl;
-  // std::cout << "    Batch: " << w->batchSize() << std::endl;
-  // std::cout << "    Blocking: " << std::boolalpha << blocking << std::endl;
-  return;
 }
-
-}  // namespace ep

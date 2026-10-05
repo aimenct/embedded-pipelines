@@ -1,0 +1,30 @@
+filters:
+   -  name: RGB
+      type: ArvCam
+      filter_settings:
+         arv_num_buffers: 20                  # number of buffers in aravis queue
+         # mtu: 8228                            # network mtu
+         # mac: 70:f8:e7:b0:06:73             # warning: must be LOWER CASE
+      device_settings:
+#         PixelFormat: Mono8                   # (enumeration) mono8, mono10, mono12
+#         ExposureTime: 3000                   # (float)
+#         Width:                               # (null value)
+#         Height:                              # (null value)
+#         OffsetY:                             # (null value)
+         # AcquisitionFrameRateEnable: 1   # (bool) 1-true / 0-false
+#         EnAcquisitionFrameRate: 1         # (bool) 1-true / 0-false
+#         AcquisitionFrameRate: 30             # (float)
+
+   -  name: Display
+      type: GlutDisplay
+
+      windows:                     
+        - name: my image
+          type: Image
+          source: [0,0,data]          # [port id, item id, data or header buffer]
+          update interval: 40       # ms
+
+   -  name: OPCUAserver
+      type: OPCUAserver
+      filter_settings:
+         server_port: 4840

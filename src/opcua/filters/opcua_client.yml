@@ -1,0 +1,41 @@
+# OPCUAClient full pipeline configuration template.
+# Copy/paste this block into your config.yml.
+
+filters:
+  - name: OPCUAclient
+    type: OPCUAclient
+    settings:
+      base:
+        # ---- OPCUAclient built-in filter settings ----
+        server_url: opc.tcp://127.0.0.1:4840  # OPC-UA endpoint URL
+        sampling_interval: 0.05               # Poll/write period in seconds
+        reverse_connection: false             # Use reverse connect mode
+        reverse_connect_port: 4800            # Listening port for reverse mode
+
+      sink_ports:
+        # Sink ports receive values read from OPC-UA (pull path).
+        "0":
+          length: 50
+          max_readers: 5
+          max_writers: 1
+          queue_type: 0
+          batch_size: 1
+          blocking: true
+          timestamp: false
+
+      source_ports:
+        # Source ports provide values written to OPC-UA (push path).
+        "0":
+          message_window: 1
+          message_stride: 1
+          blocking: true
+
+    pull_items:
+      # Read this OPC-UA node and publish value into sink queue schema.
+      - ua_node_id: ns=1;i=1001
+
+    push_items:
+      # Write source queue item -> OPC-UA node.
+      - src_queue_index: 0
+        item_index: 0
+        ua_node_id: ns=1;i=1002

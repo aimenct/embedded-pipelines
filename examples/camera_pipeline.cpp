@@ -4,13 +4,15 @@
 
 #include <time.h>
 
-#include "camera.h"
-#include "opcua.h"
-#include "core.h"
+#include <memory>
 
-int main(int /*argc*/, char** /*argv[]*/)
+#include "camera.h"
+#include "core.h"
+#include "opcua.h"
+
+int main(int /*argc*/, char ** /*argv[]*/)
 {
-  using namespace ep;
+  using namespace epf;
 
   // /* check command line arguments */
   // if (argc!=2) {
@@ -33,38 +35,34 @@ int main(int /*argc*/, char** /*argv[]*/)
   YAML::Node node1 = config["filters"][1];
   YAML::Node node2 = config["filters"][2];
 
-  ArvCam *camera = new ArvCam(node0);
-  OPCUAserver *server = new OPCUAserver(node1);
-  GlDisplay *display = new GlDisplay(node2);
+  Pipeline pipe;
 
-  int threads = 2;
+  auto camera = pipe.add<ArvCam>(node0);
+  auto display = pipe.add<GlutDisplay>(node1);
+  auto server = std::make_unique<OPCUAserver>(node2);
 
-  Pipeline pipe(threads);
-
-  pipe.add(camera);
-  pipe.add(server);
-  pipe.add(display);
-
-  pipe.connect(camera, 0, server, 0);
+  //  pipe.connect(camera, 0, server, 0);
   pipe.connect(camera, 0, display, 0);
 
   pipe.printFilters();
   pipe.printGraph();
   getchar();
 
-  pipe.assignTask(0, camera);
-  pipe.assignTask(1, server);
-  pipe.assignTask(2, display);
-
+  printf("pres enter to open\n");
+  getchar();
+  pipe.open();
+  printf("pres enter to set\n");
+  getchar();
+  camera->saveSettings("");
+  pipe.set();
   printf("pres enter to start\n");
   getchar();
+  pipe.start();
 
-  pipe.run();
+  pipe.launch();
 
   printf("pres enter to stop\n");
   getchar();
 
   pipe.halt();
-
-  
 }

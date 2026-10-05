@@ -15,8 +15,9 @@
 #include <cstdlib>
 #include <list>
 #include <map>
+#include <optional>
 
-#include "ep_types.h"
+#include "epf_types.h"
 #include "message.h"
 
 inline int modulus(int x, int N)
@@ -24,15 +25,7 @@ inline int modulus(int x, int N)
   return (((x < 0) ? ((x % N) + N) : x) % N);
 }
 
-namespace ep {
-
-enum QueueType { fifo, lifo };
-enum ScheduleMode { push, pull };
-
-/* Queue - return error definition */
-constexpr int QE_OK = 0;              // success
-constexpr int QE_NOT_PERMITTED = -1;  // operation not permitted
-constexpr int QE_DISABLED = -2;       // queue disabled
+namespace epf {
 
 /* Forward declaration of Producer and Consumer classes for internal use */
 class Qproducer;
@@ -52,7 +45,7 @@ class Qconsumer;
  */
 class Queue {
   private:
-    char status_;  // Queue status: 'c'-connected, 'd'-disconnected
+    char status_{'d'};  // Queue status: 'c'-connected, 'd'-disconnected
 
     /* Synchronization primitives */
     pthread_mutex_t buffer_mtx_;
@@ -69,8 +62,10 @@ class Queue {
     char *data_buffer_;  // Circular buffer for data
     char *hdr_buffer_;   // Circular buffer for headers
 
-    Message *data_message_;
-    Message *hdr_message_;
+    // Message *data_message_;
+    // Message *hdr_message_;
+    std::unique_ptr<Message> data_message_;
+    std::unique_ptr<Message> hdr_message_;
 
     int max_producers_;  // Maximum number of producers allowed
     int max_consumers_;  // Maximum number of consumers allowed
@@ -83,8 +78,8 @@ class Queue {
     std::list<int> producers_on_;
     std::list<int> producers_off_;
 
-    QueueType queue_type_;        // fifo, lifo
-    ScheduleMode schedule_mode_;  // push, pull
+    QueueType queue_type_{lifo};        // fifo, lifo
+    ScheduleMode schedule_mode_{push};  // push, pull
 
     //  Callbacks for reading in pull mode
     //    void *pvt_;
@@ -100,16 +95,25 @@ class Queue {
                       // location)
     int last_input_;  // Pointer to the last inserted buffer
 
+    /**
+     * @brief Recomputes barrier_ from the active consumers. Requires
+     * buffer_mtx_ to be held.
+     */
+    void updateBarrierLocked();
+
   public:
     /**
-     * @brief Default constructor.
-     * Initializes an empty Queue.
+     * @brief Default constructor. Initializes an empty Queue.
      */
     Queue();
 
     /**
-     * @brief Destructor.
-     * Cleans up resources used by the Queue.
+     * @brief Default constructor. Initializes with a certain QueueType.
+     */
+    Queue(QueueType type);
+
+    /**
+     * @brief Destructor. Cleans up resources used by the Queue.
      */
     ~Queue();
 
@@ -140,8 +144,11 @@ class Queue {
      * (optional).
      * @return Error code: 0 for success, non-zero for failure.
      */
-    int init(int length, Message *data_s, Message *hdr_s = nullptr,
-             int max_consumers = 4, int max_producers = 1);
+    // int init(int length, Message *data_s, Message *hdr_s = nullptr,
+    //          int max_consumers = 4, int max_producers = 1);
+    int init(int length, std::unique_ptr<Message> data_s,
+             std::unique_ptr<Message> hdr_s = nullptr, int max_consumers = 4,
+             int max_producers = 1);
 
     /**
      * @brief Release the queue, freeing allocated memory.
@@ -150,30 +157,23 @@ class Queue {
     int free();
 
     /**
+     * @brief Get the status of the queue: connected or disconnected.
+     * @return status Queue status: 'c'-connected, 'd'-disconnected.
+     */
+    char status();
+
+    /**
      * @brief Set type of Queue: LIFO or FIFO.
      * @param type Queue type: LIFO or FIFO.
      * @return Error code: 0 for success, non-zero for failure.
      */
-    int setQueueType(QueueType type);
+    int setType(QueueType type);
 
     /**
      * @brief Get type of Queue: LIFO or FIFO.
      * @return Queue type: LIFO or FIFO.
      */
-    QueueType queueType();
-
-    //  /**
-    //  * @brief Set scheduling mode: PUSH or PULL.
-    //  * @param mode Scheduling mode: PUSH or PULL.
-    //  * @return Error code: 0 for success, non-zero for failure.
-    //  */
-    // int setScheduleMode(ScheduleMode mode);
-
-    //  /**
-    //  * @brief Get schedule mode: PUSH or PULL.
-    //  * @return Scheduling mode: PUSH or PULL.
-    //  */
-    // ScheduleMode scheduleMode();
+    QueueType type();
 
     /**
      * @brief Subscribe a producer to the queue.
@@ -246,19 +246,20 @@ class Queue {
                    int *len, char **data1, char **hdr1, int *len1);
 
     /**
-     * @brief Release the buffer pointer after writing.
+     * @brief Release pending buffers after writing.
      * @param producer_id Producer ID.
+     * @param done Number of buffers to commit (-1 all pending).
      * @return Error code: 0 for success, non-zero for failure.
      */
-    int endWrite(int producer_id);
+    int endWrite(int producer_id, int done = -1);
 
     /**
-     * @brief End write operation without writing buffers (for one producer
-     * only).
+     * @brief Cancel a previous reservation without committing data.
      * @param producer_id Producer ID.
+     * @param pending Number of buffers to roll back (-1 all pending).
      * @return Error code: 0 for success, non-zero for failure.
      */
-    int endWriteAbort(int producer_id);
+    int endWriteAbort(int producer_id, int pending = -1);
 
     /**
      * @brief Get the position in the circular buffer from where to read a block
@@ -349,6 +350,9 @@ class Queue {
      */
     int setReadBlocking(int id, bool blocking);
 
+    std::optional<bool> readBlocking(int32_t id);
+    std::optional<bool> writeBlocking(int32_t id);
+
     /**
      * @brief Get the number of messages in the circular buffer.
      * @return Number of messages.
@@ -383,13 +387,13 @@ class Queue {
      * @brief Get the pointer to the data message schema.
      * @return Pointer to the data message schema.
      */
-    Message *dataMessage() const;
+    const Message *dataMessage() const;
 
     /**
      * @brief Get the pointer to the header message schema.
      * @return Pointer to the header message schema.
      */
-    Message *hdrMessage() const;
+    const Message *hdrMessage() const;
 
     /**
      * @brief Print the statistics of the circular buffer.
@@ -409,12 +413,13 @@ class Queue {
 
 class Qproducer {
   public:
-    int id;            // thead identifier
-    char status;       // 's'-subscribed, 'u'-unsubscribed, 'w'-working
-    int counter;       // counter of produced elements
-    char blocking;     // blocking calls: 'n'-no, 'y'-yes
-    int next_input;    // pointer to next empty buffer for writting
-    int num_elements;  // number of elements to write
+    int id;       // thead identifier
+    char status;  // 's'-subscribed, 'u'-unsubscribed, 'w'-working
+    int counter;  // counter of produced elements
+    bool blocking;
+    //    int next_input;    // pointer to next empty buffer for writting
+    int num_elements;      // number of elements to write
+    int pending_elements;  // number of elements reserved but not committed
     Qproducer();
     void reset();
     void print();
@@ -429,7 +434,7 @@ class Qconsumer {
     int counter;       // counter of consumed elements
     int lost_counter;  // buffers lost - elements in the queue
     void *ptr_aux;     // pointer for callback use
-    char blocking;     // blocking calls: 'n'-no, 'y'-yes
+    bool blocking;
     int num_elements;  // number of elements to read
     int new_elements;  // number of new elements to read
     int free_elements;
@@ -438,6 +443,6 @@ class Qconsumer {
     void print();
 };
 
-}  // namespace ep
+}  // namespace epf
 
 #endif  // QUEUE_H

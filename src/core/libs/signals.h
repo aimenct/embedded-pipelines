@@ -25,7 +25,9 @@ SOFTWARE.
 // Note: This file was modified from its original version. The changes include:
 // - Changing the file extension from .hpp to .h
 
-#pragma once
+#ifndef EPF_SIGNALS_H
+#define EPF_SIGNALS_H
+
 #include <cstdlib>
 #include <vector>
 
@@ -34,14 +36,14 @@ namespace details {
 struct conn_base;
 struct sig_base {
     struct call {
-        void* object;
-        void* func;
+        void *object;
+        void *func;
     };
 
     // space can be optimized by using "struct of array" containers since both
     // always have the same size
     mutable std::vector<call> calls;
-    mutable std::vector<conn_base*> conns;
+    mutable std::vector<conn_base *> conns;
 
     // space can be optimized by stealing 2 unused bits from the vector size
     mutable bool calling = false;
@@ -49,21 +51,21 @@ struct sig_base {
 
     sig_base() = default;
     ~sig_base();
-    sig_base(const sig_base&) = delete;
-    sig_base& operator=(const sig_base&) = delete;
-    sig_base(sig_base&& other) noexcept;
-    sig_base& operator=(sig_base&& other) noexcept;
+    sig_base(const sig_base &) = delete;
+    sig_base &operator=(const sig_base &) = delete;
+    sig_base(sig_base &&other) noexcept;
+    sig_base &operator=(sig_base &&other) noexcept;
 };
 
 struct blocked_connection {
-    const sig_base* sig = nullptr;
+    const sig_base *sig = nullptr;
     sig_base::call call = {nullptr, nullptr};
 };
 
 struct conn_base {
     union {
-        const sig_base* sig;
-        blocked_connection* blocked_conn;
+        const sig_base *sig;
+        blocked_connection *blocked_conn;
     };
 
     size_t idx;
@@ -73,7 +75,7 @@ struct conn_base {
     bool blocked = false;
     bool owned = false;
 
-    conn_base(const sig_base* sig, size_t idx)
+    conn_base(const sig_base *sig, size_t idx)
         : sig(sig),
           idx(idx)
     {
@@ -94,7 +96,7 @@ struct conn_base {
       }
     }
 
-    void set_sig(const sig_base* sig)
+    void set_sig(const sig_base *sig)
     {
       if (blocked)
         this->blocked_conn->sig = sig;
@@ -106,7 +108,7 @@ struct conn_base {
     {
       if (!blocked) {
         blocked = 1;
-        const sig_base* orig_sig = sig;
+        const sig_base *orig_sig = sig;
         sig = nullptr;
         blocked_conn = new blocked_connection;
         blocked_conn->sig = orig_sig;
@@ -117,7 +119,7 @@ struct conn_base {
     void unblock()
     {
       if (blocked) {
-        const sig_base* orig_sig = blocked_conn->sig;
+        const sig_base *orig_sig = blocked_conn->sig;
         std::swap(blocked_conn->call, orig_sig->calls[idx]);
         delete blocked_conn;
         blocked_conn = nullptr;
@@ -133,13 +135,13 @@ struct conn_nontrivial : conn_base {
 
     virtual ~conn_nontrivial()
     {
-      if (sig) reinterpret_cast<T*>(&sig->calls[idx].object)->~T();
+      if (sig) reinterpret_cast<T *>(&sig->calls[idx].object)->~T();
     }
 };
 
 inline sig_base::~sig_base()
 {
-  for (conn_base* c : conns) {
+  for (conn_base *c : conns) {
     if (c) {
       if (c->owned)
         c->set_sig(nullptr);
@@ -149,23 +151,23 @@ inline sig_base::~sig_base()
   }
 }
 
-inline sig_base::sig_base(sig_base&& other) noexcept
+inline sig_base::sig_base(sig_base &&other) noexcept
     : calls(std::move(other.calls)),
       conns(std::move(other.conns)),
       calling(other.calling),
       dirty(other.dirty)
 {
-  for (conn_base* c : conns)
+  for (conn_base *c : conns)
     if (c) c->set_sig(this);
 }
 
-inline sig_base& sig_base::operator=(sig_base&& other) noexcept
+inline sig_base &sig_base::operator=(sig_base &&other) noexcept
 {
   calls = std::move(other.calls);
   conns = std::move(other.conns);
   calling = other.calling;
   dirty = other.dirty;
-  for (conn_base* c : conns)
+  for (conn_base *c : conns)
     if (c) c->set_sig(this);
   return *this;
 }
@@ -176,11 +178,11 @@ struct signal;
 
 // A connection without auto disconnection
 struct connection_raw {
-    details::conn_base* ptr = nullptr;
+    details::conn_base *ptr = nullptr;
 };
 
 struct connection {
-    details::conn_base* ptr = nullptr;
+    details::conn_base *ptr = nullptr;
 
     void disconnect()
     {
@@ -204,17 +206,17 @@ struct connection {
     {
       disconnect();
     }
-    connection(const connection&) = delete;
+    connection(const connection &) = delete;
 
-    connection& operator=(const connection&) = delete;
+    connection &operator=(const connection &) = delete;
 
-    connection(connection&& other) noexcept
+    connection(connection &&other) noexcept
         : ptr(other.ptr)
     {
       other.ptr = nullptr;
     }
 
-    connection& operator=(connection&& other) noexcept
+    connection &operator=(connection &&other) noexcept
     {
       disconnect();
       ptr = other.ptr;
@@ -232,18 +234,18 @@ struct connection {
 template <typename... A>
 struct signal<void(A...)> : details::sig_base {
     template <typename... ActualArgsT>
-    void operator()(ActualArgsT&&... args) const
+    void operator()(ActualArgsT &&...args) const
     {
       bool recursion = calling;
       if (!calling) calling = 1;
       for (size_t i = 0, n = calls.size(); i < n; ++i) {
-        auto& cb = calls[i];
+        auto &cb = calls[i];
         if (cb.func) {
           if (cb.object == cb.func)
             reinterpret_cast<void (*)(A...)>(cb.func)(
                 std::forward<ActualArgsT>(args)...);
           else
-            reinterpret_cast<void (*)(void*, A...)>(cb.func)(
+            reinterpret_cast<void (*)(void *, A...)>(cb.func)(
                 &cb.object, std::forward<ActualArgsT>(args)...);
         }
       }
@@ -271,15 +273,15 @@ struct signal<void(A...)> : details::sig_base {
     }
 
     template <auto PMF, class C>
-    connection_raw connect(C* object) const
+    connection_raw connect(C *object) const
     {
       size_t idx = conns.size();
-      auto& call = calls.emplace_back();
+      auto &call = calls.emplace_back();
       call.object = object;
-      call.func = reinterpret_cast<void*>(+[](void* obj, A... args) {
-        ((*reinterpret_cast<C**>(obj))->*PMF)(args...);
+      call.func = reinterpret_cast<void *>(+[](void *obj, A... args) {
+        ((*reinterpret_cast<C **>(obj))->*PMF)(args...);
       });
-      details::conn_base* conn = new details::conn_base(this, idx);
+      details::conn_base *conn = new details::conn_base(this, idx);
       conns.emplace_back(conn);
       return {conn};
     }
@@ -293,15 +295,15 @@ struct signal<void(A...)> : details::sig_base {
     connection_raw connect(void (*func)(A...)) const
     {
       size_t idx = conns.size();
-      auto& call = calls.emplace_back();
-      call.func = call.object = reinterpret_cast<void*>(func);
-      details::conn_base* conn = new details::conn_base(this, idx);
+      auto &call = calls.emplace_back();
+      call.func = call.object = reinterpret_cast<void *>(func);
+      details::conn_base *conn = new details::conn_base(this, idx);
       conns.emplace_back(conn);
       return {conn};
     }
 
     template <typename F>
-    connection_raw connect(F&& functor) const
+    connection_raw connect(F &&functor) const
     {
       using f_type = std::remove_pointer_t<std::remove_reference_t<F>>;
       if constexpr (std::is_convertible_v<f_type, void (*)(A...)>) {
@@ -309,41 +311,41 @@ struct signal<void(A...)> : details::sig_base {
       }
       else if constexpr (std::is_lvalue_reference_v<F>) {
         size_t idx = conns.size();
-        auto& call = calls.emplace_back();
-        call.func = reinterpret_cast<void*>(+[](void* obj, A... args) {
-          (*reinterpret_cast<f_type**>(obj))->operator()(args...);
+        auto &call = calls.emplace_back();
+        call.func = reinterpret_cast<void *>(+[](void *obj, A... args) {
+          (*reinterpret_cast<f_type **>(obj))->operator()(args...);
         });
         call.object = &functor;
-        details::conn_base* conn = new details::conn_base(this, idx);
+        details::conn_base *conn = new details::conn_base(this, idx);
         conns.emplace_back(conn);
         return {conn};
       }
       else if constexpr (sizeof(std::remove_pointer_t<f_type>) <=
-                         sizeof(void*)) {
+                         sizeof(void *)) {
         // copy the functor.
         size_t idx = conns.size();
-        auto& call = calls.emplace_back();
-        call.func = reinterpret_cast<void*>(+[](void* obj, A... args) {
-          reinterpret_cast<f_type*>(obj)->operator()(args...);
+        auto &call = calls.emplace_back();
+        call.func = reinterpret_cast<void *>(+[](void *obj, A... args) {
+          reinterpret_cast<f_type *>(obj)->operator()(args...);
         });
         new (&call.object) f_type(std::move(functor));
         using conn_t =
             std::conditional_t<std::is_trivially_destructible_v<F>,
                                details::conn_base, details::conn_nontrivial<F>>;
-        details::conn_base* conn = new conn_t(this, idx);
+        details::conn_base *conn = new conn_t(this, idx);
         conns.emplace_back(conn);
         return {conn};
       }
       else {
         struct unique {
-            f_type* ptr;
+            f_type *ptr;
 
-            unique(f_type* ptr)
+            unique(f_type *ptr)
                 : ptr(ptr)
             {
             }
-            unique(const unique&) = delete;
-            unique(unique&&) = delete;
+            unique(const unique &) = delete;
+            unique(unique &&) = delete;
 
             ~unique()
             {
@@ -352,12 +354,12 @@ struct signal<void(A...)> : details::sig_base {
         };
 
         size_t idx = conns.size();
-        auto& call = calls.emplace_back();
-        call.func = reinterpret_cast<void*>(+[](void* obj, A... args) {
-          reinterpret_cast<unique*>(obj)->ptr->operator()(args...);
+        auto &call = calls.emplace_back();
+        call.func = reinterpret_cast<void *>(+[](void *obj, A... args) {
+          reinterpret_cast<unique *>(obj)->ptr->operator()(args...);
         });
         new (&call.object) unique{new f_type(std::move(functor))};
-        details::conn_base* conn =
+        details::conn_base *conn =
             new details::conn_nontrivial<unique>(this, idx);
         conns.emplace_back(conn);
         return {conn};
@@ -365,3 +367,5 @@ struct signal<void(A...)> : details::sig_base {
     }
 };
 }  // namespace fteng
+
+#endif
